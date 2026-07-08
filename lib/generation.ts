@@ -91,13 +91,19 @@ async function generateWithOpenAI(
         {
           role: "system",
           content:
-            "You are an expert travel planner. Respond ONLY with valid JSON matching exactly this schema (3-5 items per recommendation category, one itinerary entry per day):\n" +
+            "You are an expert travel planner with deep destination knowledge. Respond ONLY with valid JSON matching exactly this schema (4-6 items per recommendation category, one itinerary entry per day):\n" +
             PROMPT_SCHEMA +
-            "\nRate each item's confidence 0-1 based on how certain you are the information is accurate and current. Ratings are 0-5. price_range uses $ / $$ / $$$ or an approximate figure.",
+            "\nHard rules:\n" +
+            "- Every recommendation must be a REAL, specific, named place that exists: actual attractions, actual restaurants (with neighborhood), actual hotels. Never output generic filler like 'signature landmark', 'local market' or 'boutique hotel' without a proper name.\n" +
+            "- flights: name real airlines that fly the route, typical routing (direct or via which hub), approximate current round-trip cost and flight time.\n" +
+            "- local_transport: the city's actual systems, passes and typical fares (e.g. Suica/Pasmo, T-casual, Oyster).\n" +
+            "- itinerary entries must reference the named places from your recommendations, in a geographically sensible order.\n" +
+            "- price_range: a realistic figure or range in USD (or $ / $$ / $$$ for restaurants). rating: 0-5, your honest quality estimate.\n" +
+            "- confidence: 0-1 per item — how certain you are the place is still operating and details are accurate. Use lower values for prices and schedules, which change.",
         },
         {
           role: "user",
-          content: `Plan a trip:\n- Destination: ${input.city}, ${input.country}\n- Origin: ${input.origin_country}\n- Duration: ${input.duration_days} days\n- Budget: ${input.budget_range ?? "flexible"}\n- Purpose: ${input.trip_purpose}\nInclude realistic flight guidance from ${input.origin_country} and local transport options.`,
+          content: `Plan a trip:\n- Destination: ${input.city}, ${input.country}\n- Origin: ${input.origin_country}\n- Duration: ${input.duration_days} days\n- Budget: ${input.budget_range ?? "flexible"}\n- Purpose: ${input.trip_purpose}${input.start_date ? `\n- Travel dates: starting ${input.start_date} (consider the season)` : ""}\nInclude realistic flight guidance from ${input.origin_country} and the city's real local transport options.`,
         },
       ],
     }),

@@ -67,6 +67,14 @@ export default async function PlanPage({
   const itinerary = (days ?? []) as ItineraryDay[];
   const unlocked = p.is_unlocked || isDemoPlan(p.id);
   const isEmpty = recommendations.length === 0 && itinerary.length === 0;
+  // Content produced by the no-AI template engine can be upgraded in place
+  // once an AI key is configured.
+  const isTemplateContent =
+    !isEmpty &&
+    !isDemoPlan(p.id) &&
+    recommendations.every((r) => r.recommendation_source?.startsWith("template")) &&
+    itinerary.every((d) => d.itinerary_source?.startsWith("template"));
+  const aiConfigured = Boolean(process.env.OPENAI_API_KEY);
   const totalDays = p.duration_days ?? itinerary.length;
   const visibleDays = unlocked ? itinerary : itinerary.filter((d) => d.day_number === 1);
   const lockedDayNumbers = unlocked
@@ -89,6 +97,17 @@ export default async function PlanPage({
       {sp.canceled === "1" && (
         <div role="status" className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-800">
           Checkout canceled — your plan is still here. Unlock whenever you&apos;re ready.
+        </div>
+      )}
+      {isTemplateContent && (
+        <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-indigo-900">
+          <div>
+            <strong>This plan was built without AI.</strong>{" "}
+            {aiConfigured
+              ? "AI generation is now available — regenerate to get real named places, restaurants, hotels and flight guidance."
+              : "It uses general templates, not specific venues. Once the site owner adds an OpenAI key, regenerate it to get real named places."}
+          </div>
+          {aiConfigured && <RegenerateButton planId={p.id} label="Regenerate with AI" />}
         </div>
       )}
       {sp.generation_error === "1" && (
