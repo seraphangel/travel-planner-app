@@ -63,7 +63,35 @@ export async function unlockPlanFromSession(
     risk_level: "high",
   });
 
+  await sendReceiptEmail(session, planId);
+
   return { ok: true, planId };
+}
+
+// Payment receipt via Resend — best effort, only when RESEND_API_KEY is set.
+async function sendReceiptEmail(session: Stripe.Checkout.Session, planId: string) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to = session.customer_details?.email;
+  if (!apiKey || !to) return;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "";
+  const amount = ((session.amount_total ?? 0) / 100).toFixed(2);
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: process.env.RECEIPT_FROM_EMAIL ?? "Wayfare <onboarding@resend.dev>",
+        to: [to],
+        subject: "Your travel plan is unlocked 🎉",
+        html: `<p>Thanks for your purchase — your payment of $${amount} was received and your full travel plan is now unlocked.</p><p><a href="${appUrl}/plans/${planId}">View your plan</a></p>`,
+      }),
+    });
+  } catch (e) {
+    console.error("receipt email failed", e);
+  }
 }
 
 /**
