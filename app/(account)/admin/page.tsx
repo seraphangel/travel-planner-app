@@ -23,7 +23,7 @@ export default async function AdminPage() {
 
   if (!isAdmin) {
     return (
-      <main className="mx-auto max-w-xl px-4 py-24 text-center">
+      <main className="py-16 text-center">
         <h1 className="text-2xl font-bold">Admin access required</h1>
         <p className="mt-2 text-slate-600">
           {adminEmails.length === 0
@@ -61,7 +61,7 @@ export default async function AdminPage() {
   };
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-10">
+    <main>
       <h1 className="text-3xl font-bold tracking-tight">Admin</h1>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-4">

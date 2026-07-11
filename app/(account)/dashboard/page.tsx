@@ -30,7 +30,7 @@ export default async function DashboardPage() {
   const subByPlan = new Map(mySubs.map((s) => [s.travel_plan_id, s]));
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-10">
+    <main>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">My plans</h1>
