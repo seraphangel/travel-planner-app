@@ -59,6 +59,26 @@ export async function generatePlanContent(
   return generateFromTemplates(input);
 }
 
+/**
+ * Generate a fresh draft for ONE itinerary day. Medium-risk action per
+ * docs/AGENTIC_LAYER.md — callers must show the draft to the user for
+ * confirmation before persisting it.
+ */
+export async function generateSingleDay(
+  input: GenerationInput,
+  dayNumber: number,
+  opts?: { forceTemplate?: boolean },
+): Promise<GeneratedDay> {
+  if (!opts?.forceTemplate && process.env.OPENAI_API_KEY) {
+    return await generateDayWithOpenAI(input, dayNumber);
+  }
+  const day = generateFromTemplates(input).itinerary.find(
+    (d) => d.day_number === dayNumber,
+  );
+  if (!day) throw new Error(`Day ${dayNumber} is outside this trip`);
+  return day;
+}
+
 // ─── OpenAI path ─────────────────────────────────────────────────────────────
 
 const PROMPT_SCHEMA = `{
@@ -174,6 +194,57 @@ async function generateWithOpenAI(
   itinerary.sort((a, b) => a.day_number - b.day_number);
 
   return { recommendations, itinerary, source: `openai-${model}` };
+}
+
+async function generateDayWithOpenAI(
+  input: GenerationInput,
+  dayNumber: number,
+): Promise<GeneratedDay> {
+  const model = process.env.OPENAI_MODEL ?? "gpt-4o";
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      response_format: { type: "json_object" },
+      temperature: 0.8,
+      messages: [
+        {
+          role: "system",
+          content:
+            'You are an expert travel planner. Respond ONLY with valid JSON: {"morning": "", "afternoon": "", "evening": "", "meals": "", "transport": "", "summary": "", "confidence": 0}\n' +
+            "Every activity must reference REAL, specific, named places that exist — never generic filler. confidence is 0-1: how certain you are the places are still operating.",
+        },
+        {
+          role: "user",
+          content: `Plan day ${dayNumber} of a ${input.duration_days}-day ${input.trip_purpose} trip to ${input.city}, ${input.country} (traveller from ${input.origin_country}, budget ${input.budget_range ?? "flexible"}). Propose a DIFFERENT angle on the city than a typical itinerary would have for this day — this is a regeneration, so avoid the most obvious picks.`,
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`OpenAI request failed (${res.status}): ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenAI returned an empty response");
+  const day = JSON.parse(content);
+  return {
+    day_number: dayNumber,
+    morning: String(day.morning ?? ""),
+    afternoon: String(day.afternoon ?? ""),
+    evening: String(day.evening ?? ""),
+    meals: String(day.meals ?? ""),
+    transport: String(day.transport ?? ""),
+    summary: String(day.summary ?? `Day ${dayNumber} in ${input.city}`),
+    confidence: clampNumber(day.confidence, 0, 1) ?? 0.75,
+  };
 }
 
 function clampNumber(v: unknown, min: number, max: number): number | undefined {

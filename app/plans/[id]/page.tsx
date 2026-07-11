@@ -10,8 +10,11 @@ import {
   type TravelPlan,
 } from "@/lib/types";
 import { verifyCheckoutAndUnlock } from "@/lib/unlock";
+import { canEditPlan } from "@/lib/permissions";
 import UnlockButton from "./UnlockButton";
 import RegenerateButton from "./RegenerateButton";
+import RegenerateDayButton from "./RegenerateDayButton";
+import EditPlanDates from "./EditPlanDates";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +78,11 @@ export default async function PlanPage({
     recommendations.every((r) => r.recommendation_source?.startsWith("template")) &&
     itinerary.every((d) => d.itinerary_source?.startsWith("template"));
   const aiConfigured = Boolean(process.env.OPENAI_API_KEY);
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const canEdit = canEditPlan(p, user?.id);
   const totalDays = p.duration_days ?? itinerary.length;
   const visibleDays = unlocked ? itinerary : itinerary.filter((d) => d.day_number === 1);
   const lockedDayNumbers = unlocked
@@ -132,6 +140,11 @@ export default async function PlanPage({
             {p.budget_range && <span className="rounded-full bg-white border border-slate-200 px-3 py-1">💰 {p.budget_range}</span>}
             <span className="rounded-full bg-white border border-slate-200 px-3 py-1 capitalize">🎯 {p.trip_purpose}</span>
           </div>
+          {canEdit && (
+            <div className="mt-3">
+              <EditPlanDates planId={p.id} startDate={p.start_date} endDate={p.end_date} />
+            </div>
+          )}
         </div>
         {!unlocked && !isEmpty && (
           <div className="rounded-xl border border-slate-200 bg-white p-4 text-center shadow-sm">
@@ -228,6 +241,7 @@ export default async function PlanPage({
                   {(d.itinerary_confidence ?? 1) < 0.7 && (
                     <p className="mt-2 text-xs text-amber-600">⚠️ AI-generated — verify before booking</p>
                   )}
+                  {canEdit && <RegenerateDayButton planId={p.id} dayNumber={d.day_number} />}
                 </article>
               ))}
 
