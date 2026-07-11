@@ -57,6 +57,7 @@ export async function POST(request: Request) {
         source: content.source,
         recommendations: content.recommendations.length,
         days: content.itinerary.length,
+        usage: content.usage ?? null,
       },
       risk_level: "low",
     });

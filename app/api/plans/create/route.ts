@@ -55,6 +55,27 @@ export async function POST(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Free-generation quota: each account may hold a limited number of unpaid
+  // plans. Unlocking a plan frees up a slot, so paying users keep creating.
+  // Legacy anonymous plans (user_id null) aren't counted or restricted.
+  if (user) {
+    const limit = Number(process.env.FREE_PLAN_LIMIT ?? 3);
+    const { count } = await supabase
+      .from("travel_plans")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("is_unlocked", false);
+    if ((count ?? 0) >= limit) {
+      return NextResponse.json(
+        {
+          error: `You've reached the limit of ${limit} unpaid plans. Unlock one of your existing plans to create more.`,
+          code: "quota_exceeded",
+        },
+        { status: 403 },
+      );
+    }
+  }
+
   const { data: destination, error: destError } = await supabase
     .from("destinations")
     .insert({ city, country, user_id: user?.id ?? null })
@@ -107,6 +128,19 @@ export async function POST(request: Request) {
     });
     await persistGeneration(supabase, plan, content);
     await supabase.from("travel_plans").update({ status: "published" }).eq("id", plan.id);
+    await writeAuditLog(supabase, {
+      action: "plan.generated",
+      entity_type: "travel_plan",
+      entity_id: plan.id,
+      user_id: user?.id ?? null,
+      detail: {
+        source: content.source,
+        recommendations: content.recommendations.length,
+        days: content.itinerary.length,
+        usage: content.usage ?? null,
+      },
+      risk_level: "low",
+    });
     return NextResponse.json({ id: plan.id });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Generation failed";

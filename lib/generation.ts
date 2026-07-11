@@ -40,6 +40,8 @@ export type GeneratedContent = {
   recommendations: GeneratedRecommendation[];
   itinerary: GeneratedDay[];
   source: string;
+  // Actual token spend reported by the model API (absent for template runs).
+  usage?: { prompt_tokens: number; completion_tokens: number };
 };
 
 /**
@@ -193,7 +195,17 @@ async function generateWithOpenAI(
   }
   itinerary.sort((a, b) => a.day_number - b.day_number);
 
-  return { recommendations, itinerary, source: `openai-${model}` };
+  return {
+    recommendations,
+    itinerary,
+    source: `openai-${model}`,
+    usage: data.usage
+      ? {
+          prompt_tokens: Number(data.usage.prompt_tokens ?? 0),
+          completion_tokens: Number(data.usage.completion_tokens ?? 0),
+        }
+      : undefined,
+  };
 }
 
 async function generateDayWithOpenAI(

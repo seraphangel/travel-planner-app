@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import PasswordForm from "./PasswordForm";
+import DeleteAccount from "./DeleteAccount";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,8 @@ export default async function ProfilePage() {
         <h2 className="font-semibold">Change password</h2>
         <PasswordForm />
       </section>
+
+      <DeleteAccount />
     </main>
   );
 }

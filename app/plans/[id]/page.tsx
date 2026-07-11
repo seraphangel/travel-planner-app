@@ -15,6 +15,7 @@ import UnlockButton from "./UnlockButton";
 import RegenerateButton from "./RegenerateButton";
 import RegenerateDayButton from "./RegenerateDayButton";
 import EditPlanDates from "./EditPlanDates";
+import TripPoster from "./TripPoster";
 
 export const dynamic = "force-dynamic";
 
@@ -272,6 +273,26 @@ export default async function PlanPage({
               )}
             </div>
           </section>
+
+          <TripPoster
+            title={p.title}
+            destination={
+              p.destinations
+                ? `${p.destinations.city}, ${p.destinations.country}`
+                : p.title
+            }
+            dates={
+              p.start_date && p.end_date
+                ? `${p.start_date} → ${p.end_date}`
+                : "Dates TBD"
+            }
+            days={totalDays}
+            purpose={p.trip_purpose}
+            highlights={recommendations
+              .filter((r) => r.category === "places_to_visit")
+              .slice(0, 3)
+              .map((r) => r.name)}
+          />
         </>
       )}
     </main>
