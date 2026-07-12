@@ -281,6 +281,7 @@ export default async function PlanPage({
                 ? `${p.destinations.city}, ${p.destinations.country}`
                 : p.title
             }
+            city={p.destinations?.city ?? p.title}
             dates={
               p.start_date && p.end_date
                 ? `${p.start_date} → ${p.end_date}`
@@ -290,7 +291,7 @@ export default async function PlanPage({
             purpose={p.trip_purpose}
             highlights={recommendations
               .filter((r) => r.category === "places_to_visit")
-              .slice(0, 3)
+              .slice(0, 5)
               .map((r) => r.name)}
           />
         </>
