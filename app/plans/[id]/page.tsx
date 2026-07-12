@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   CATEGORY_META,
+  POSTER_ADDON_PRICE_CENTS,
   RECOMMENDATION_CATEGORIES,
   isDemoPlan,
   type ItineraryDay,
@@ -40,7 +41,12 @@ export default async function PlanPage({
   const sessionId = typeof sp.session_id === "string" ? sp.session_id : null;
   if (sessionId) {
     const result = await verifyCheckoutAndUnlock(sessionId);
-    redirect(`/plans/${id}?${result.ok ? "paid=1" : "payment_error=1"}`);
+    const flag = !result.ok
+      ? "payment_error=1"
+      : result.product === "poster_addon"
+        ? "addon_paid=1"
+        : "paid=1";
+    redirect(`/plans/${id}?${flag}`);
   }
 
   const supabase = await createClient();
@@ -84,6 +90,14 @@ export default async function PlanPage({
     data: { user },
   } = await supabase.auth.getUser();
   const canEdit = canEditPlan(p, user?.id);
+
+  const { count: addonPurchases } = await supabase
+    .from("subscriptions")
+    .select("id", { count: "exact", head: true })
+    .eq("travel_plan_id", p.id)
+    .eq("plan_type", "poster_addon")
+    .eq("status", "paid");
+  const aiEntitled = (addonPurchases ?? 0) > 0;
   const totalDays = p.duration_days ?? itinerary.length;
   const visibleDays = unlocked ? itinerary : itinerary.filter((d) => d.day_number === 1);
   const lockedDayNumbers = unlocked
@@ -96,6 +110,12 @@ export default async function PlanPage({
       {sp.paid === "1" && (
         <div role="status" className="mb-6 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-800">
           🎉 <strong>Plan unlocked!</strong> Your payment was confirmed — the full itinerary is now visible and will stay unlocked on any device.
+        </div>
+      )}
+      {sp.addon_paid === "1" && (
+        <div role="status" className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-800">
+          ✨ <strong>AI Poster add-on purchased!</strong> Scroll down to the Trip
+          poster section, add your photo, and generate your seamless poster.
         </div>
       )}
       {sp.payment_error === "1" && (
@@ -275,6 +295,10 @@ export default async function PlanPage({
           </section>
 
           <TripPoster
+            planId={p.id}
+            tier={unlocked ? "premium" : "free"}
+            aiEntitled={aiEntitled}
+            aiPriceLabel={`$${(POSTER_ADDON_PRICE_CENTS / 100).toFixed(2)}`}
             title={p.title}
             destination={
               p.destinations

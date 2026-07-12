@@ -10,11 +10,12 @@ import { writeAuditLog } from "@/lib/audit";
  */
 export async function unlockPlanFromSession(
   session: Stripe.Checkout.Session,
-): Promise<{ ok: boolean; planId: string | null; reason?: string }> {
+): Promise<{ ok: boolean; planId: string | null; product: string; reason?: string }> {
   const planId = session.metadata?.travel_plan_id ?? null;
-  if (!planId) return { ok: false, planId: null, reason: "no plan in session metadata" };
+  const product = session.metadata?.product === "poster_addon" ? "poster_addon" : "unlock";
+  if (!planId) return { ok: false, planId: null, product, reason: "no plan in session metadata" };
   if (session.payment_status !== "paid") {
-    return { ok: false, planId, reason: `payment_status=${session.payment_status}` };
+    return { ok: false, planId, product, reason: `payment_status=${session.payment_status}` };
   }
 
   const supabase = createServiceClient();
@@ -26,14 +27,17 @@ export async function unlockPlanFromSession(
     .maybeSingle();
 
   if (existing?.status === "paid") {
-    return { ok: true, planId }; // already processed
+    return { ok: true, planId, product }; // already processed
   }
 
-  const { error: unlockError } = await supabase
-    .from("travel_plans")
-    .update({ is_unlocked: true })
-    .eq("id", planId);
-  if (unlockError) return { ok: false, planId, reason: unlockError.message };
+  // Only the plan-unlock product flips is_unlocked; add-ons never do.
+  if (product === "unlock") {
+    const { error: unlockError } = await supabase
+      .from("travel_plans")
+      .update({ is_unlocked: true })
+      .eq("id", planId);
+    if (unlockError) return { ok: false, planId, product, reason: unlockError.message };
+  }
 
   const paidFields = {
     status: "paid",
@@ -49,23 +53,23 @@ export async function unlockPlanFromSession(
       travel_plan_id: planId,
       user_id: session.metadata?.user_id || null,
       stripe_session_id: session.id,
-      plan_type: "one_time",
+      plan_type: product === "poster_addon" ? "poster_addon" : "one_time",
       ...paidFields,
     });
   }
 
   await writeAuditLog(supabase, {
-    action: "plan.unlocked",
+    action: product === "poster_addon" ? "poster_addon.purchased" : "plan.unlocked",
     entity_type: "travel_plan",
     entity_id: planId,
     user_id: session.metadata?.user_id || null,
-    detail: { stripe_session_id: session.id, amount_cents: session.amount_total },
+    detail: { stripe_session_id: session.id, amount_cents: session.amount_total, product },
     risk_level: "high",
   });
 
   await sendReceiptEmail(session, planId);
 
-  return { ok: true, planId };
+  return { ok: true, planId, product };
 }
 
 // Payment receipt via Resend — best effort, only when RESEND_API_KEY is set.
@@ -101,14 +105,13 @@ async function sendReceiptEmail(session: Stripe.Checkout.Session, planId: string
  */
 export async function verifyCheckoutAndUnlock(
   sessionId: string,
-): Promise<{ ok: boolean; planId: string | null }> {
-  if (!process.env.STRIPE_SECRET_KEY) return { ok: false, planId: null };
+): Promise<{ ok: boolean; planId: string | null; product: string }> {
+  if (!process.env.STRIPE_SECRET_KEY) return { ok: false, planId: null, product: "unlock" };
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const result = await unlockPlanFromSession(session);
-    return { ok: result.ok, planId: result.planId };
+    return await unlockPlanFromSession(session);
   } catch (e) {
     console.error("checkout verification failed", e);
-    return { ok: false, planId: null };
+    return { ok: false, planId: null, product: "unlock" };
   }
 }

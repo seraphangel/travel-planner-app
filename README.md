@@ -39,6 +39,8 @@ numbered migration files — never edit `0001`.
 | `OPENAI_MODEL` | optional | Override the model (default `gpt-4o`) |
 | `SUPABASE_SERVICE_ROLE_KEY` | before RLS lockdown | Webhook/admin DB access that bypasses RLS |
 | `ADMIN_EMAILS` | optional | Comma-separated emails allowed on `/admin` |
+| `FREE_PLAN_LIMIT` | optional | Unpaid plans allowed per account (default 3) |
+| `POSTER_ADDON_PRICE_CENTS` | optional | AI seamless poster add-on price (default 499) |
 | `RESEND_API_KEY` / `RECEIPT_FROM_EMAIL` | optional | Payment receipt emails |
 
 Add server-side vars with `npx vercel env add NAME production` (and

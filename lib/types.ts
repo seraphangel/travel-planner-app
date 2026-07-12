@@ -103,3 +103,7 @@ export function isDemoPlan(planId: string): boolean {
 }
 
 export const UNLOCK_PRICE_CENTS = 1900; // $19 one-time, per PRD
+export const POSTER_ADDON_PRICE_CENTS = Number(
+  process.env.POSTER_ADDON_PRICE_CENTS ?? 499,
+); // AI seamless poster add-on
+export const POSTER_ADDON_GENERATIONS = 3; // generations included per purchase
