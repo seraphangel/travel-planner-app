@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type Props = {
   planId: string;
   tier: "free" | "premium"; // free: gradient poster · premium (unlocked plan): photo collage
-  aiEntitled: boolean; // paid poster_addon purchase exists for this plan
+  aiEntitled: boolean; // paid poster_addon purchase exists for this plan (or admin)
+  isAdmin: boolean; // admins generate for free without a purchase
   aiPriceLabel: string;
   title: string;
   destination: string;
@@ -541,10 +542,16 @@ export default function TripPoster(props: Props) {
                       >
                         {aiBusy ? "Generating… (about a minute) ✨" : "Generate AI poster"}
                       </button>
-                      {aiRemaining != null && (
-                        <p className="mt-1 text-xs text-amber-700">
-                          {aiRemaining} generation{aiRemaining === 1 ? "" : "s"} remaining
+                      {props.isAdmin ? (
+                        <p className="mt-1 text-xs font-medium text-amber-700">
+                          Admin — unlimited free generations
                         </p>
+                      ) : (
+                        aiRemaining != null && (
+                          <p className="mt-1 text-xs text-amber-700">
+                            {aiRemaining} generation{aiRemaining === 1 ? "" : "s"} remaining
+                          </p>
+                        )
                       )}
                       <p className="mt-2 text-xs text-amber-700">
                         For this feature your photo is sent securely to OpenAI to

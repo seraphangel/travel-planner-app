@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminEmail } from "@/lib/permissions";
+import EmailForm from "./EmailForm";
 import PasswordForm from "./PasswordForm";
 import DeleteAccount from "./DeleteAccount";
 
@@ -11,6 +13,7 @@ export default async function ProfilePage() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect(`/login?next=${encodeURIComponent("/account/profile")}`);
+  const admin = isAdminEmail(user.email);
 
   const { count: planCount } = await supabase
     .from("travel_plans")
@@ -20,6 +23,12 @@ export default async function ProfilePage() {
   return (
     <main>
       <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
+
+      {admin && (
+        <p className="mt-3 inline-block rounded-full bg-teal-50 px-3 py-1 text-sm font-medium text-teal-700">
+          ⭐ Admin account — unlimited plans and free AI posters
+        </p>
+      )}
 
       <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6">
         <h2 className="font-semibold">Account details</h2>
@@ -39,6 +48,11 @@ export default async function ProfilePage() {
             <dd className="mt-0.5 font-medium">{planCount ?? 0}</dd>
           </div>
         </dl>
+      </section>
+
+      <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="font-semibold">Change email</h2>
+        <EmailForm currentEmail={user.email ?? ""} />
       </section>
 
       <section className="mt-6 rounded-xl border border-slate-200 bg-white p-6">

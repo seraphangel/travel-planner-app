@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { writeAuditLog } from "@/lib/audit";
+import { isAdminEmail } from "@/lib/permissions";
 import { POSTER_ADDON_GENERATIONS } from "@/lib/types";
 
 export const maxDuration = 180;
@@ -49,40 +50,48 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
 
-  // Entitlement: paid poster_addon purchases for this plan, minus prior runs.
-  const { count: purchases } = await supabase
-    .from("subscriptions")
-    .select("id", { count: "exact", head: true })
-    .eq("travel_plan_id", planId)
-    .eq("plan_type", "poster_addon")
-    .eq("status", "paid");
-  if (!purchases) {
-    return NextResponse.json(
-      { error: "The AI poster is a paid add-on — purchase it to generate.", code: "addon_required" },
-      { status: 403 },
-    );
-  }
-  const { count: used } = await supabase
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const admin = isAdminEmail(user?.email);
+
+  const { count: usedCount } = await supabase
     .from("audit_logs")
     .select("id", { count: "exact", head: true })
     .eq("entity_id", planId)
     .eq("action", "poster.ai_generated");
-  const allowance = purchases * POSTER_ADDON_GENERATIONS;
-  if ((used ?? 0) >= allowance) {
-    return NextResponse.json(
-      {
-        error: `You've used all ${allowance} included generations. Purchase the add-on again for ${POSTER_ADDON_GENERATIONS} more.`,
-        code: "generations_exhausted",
-      },
-      { status: 403 },
-    );
+  const used = usedCount ?? 0;
+
+  // Entitlement: paid poster_addon purchases for this plan, minus prior runs.
+  // Admins bypass the purchase requirement and generation cap for testing.
+  let allowance = Infinity;
+  if (!admin) {
+    const { count: purchases } = await supabase
+      .from("subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("travel_plan_id", planId)
+      .eq("plan_type", "poster_addon")
+      .eq("status", "paid");
+    if (!purchases) {
+      return NextResponse.json(
+        { error: "The AI poster is a paid add-on — purchase it to generate.", code: "addon_required" },
+        { status: 403 },
+      );
+    }
+    allowance = purchases * POSTER_ADDON_GENERATIONS;
+    if (used >= allowance) {
+      return NextResponse.json(
+        {
+          error: `You've used all ${allowance} included generations. Purchase the add-on again for ${POSTER_ADDON_GENERATIONS} more.`,
+          code: "generations_exhausted",
+        },
+        { status: 403 },
+      );
+    }
   }
 
   const city = plan.destinations?.city ?? plan.title;
   const country = plan.destinations?.country ?? "";
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
   const { data: recs } = await supabase
     .from("plan_recommendations")
@@ -128,13 +137,17 @@ export async function POST(request: Request) {
       entity_type: "travel_plan",
       entity_id: planId,
       user_id: user?.id ?? null,
-      detail: { usage: data.usage ?? null, generation: (used ?? 0) + 1, allowance },
+      detail: {
+        usage: data.usage ?? null,
+        generation: used + 1,
+        allowance: admin ? "admin_unlimited" : allowance,
+      },
       risk_level: "medium",
     });
 
     return NextResponse.json({
       image: `data:image/png;base64,${b64}`,
-      remaining: allowance - (used ?? 0) - 1,
+      remaining: admin ? null : allowance - used - 1,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Generation failed";

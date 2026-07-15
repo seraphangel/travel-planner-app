@@ -11,7 +11,7 @@ import {
   type TravelPlan,
 } from "@/lib/types";
 import { verifyCheckoutAndUnlock } from "@/lib/unlock";
-import { canEditPlan } from "@/lib/permissions";
+import { canEditPlan, isAdminEmail } from "@/lib/permissions";
 import UnlockButton from "./UnlockButton";
 import RegenerateButton from "./RegenerateButton";
 import RegenerateDayButton from "./RegenerateDayButton";
@@ -73,9 +73,17 @@ export default async function PlanPage({
       .order("day_number", { ascending: true }),
   ]);
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const canEdit = canEditPlan(p, user?.id);
+  const admin = isAdminEmail(user?.email);
+
   const recommendations = (recs ?? []) as PlanRecommendation[];
   const itinerary = (days ?? []) as ItineraryDay[];
-  const unlocked = p.is_unlocked || isDemoPlan(p.id);
+  // Admins see plans as fully unlocked so they can test the premium
+  // experience (photo collage, all days) without paying.
+  const unlocked = p.is_unlocked || isDemoPlan(p.id) || admin;
   const isEmpty = recommendations.length === 0 && itinerary.length === 0;
   // Content produced by the no-AI template engine can be upgraded in place
   // once an AI key is configured.
@@ -86,18 +94,14 @@ export default async function PlanPage({
     itinerary.every((d) => d.itinerary_source?.startsWith("template"));
   const aiConfigured = Boolean(process.env.OPENAI_API_KEY);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const canEdit = canEditPlan(p, user?.id);
-
   const { count: addonPurchases } = await supabase
     .from("subscriptions")
     .select("id", { count: "exact", head: true })
     .eq("travel_plan_id", p.id)
     .eq("plan_type", "poster_addon")
     .eq("status", "paid");
-  const aiEntitled = (addonPurchases ?? 0) > 0;
+  // Admins are treated as entitled so they can test AI generation for free.
+  const aiEntitled = admin || (addonPurchases ?? 0) > 0;
   const totalDays = p.duration_days ?? itinerary.length;
   const visibleDays = unlocked ? itinerary : itinerary.filter((d) => d.day_number === 1);
   const lockedDayNumbers = unlocked
@@ -298,6 +302,7 @@ export default async function PlanPage({
             planId={p.id}
             tier={unlocked ? "premium" : "free"}
             aiEntitled={aiEntitled}
+            isAdmin={admin}
             aiPriceLabel={`$${(POSTER_ADDON_PRICE_CENTS / 100).toFixed(2)}`}
             title={p.title}
             destination={

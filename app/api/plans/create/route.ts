@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generatePlanContent, persistGeneration } from "@/lib/generation";
 import { writeAuditLog } from "@/lib/audit";
+import { isAdminEmail } from "@/lib/permissions";
 
 export const maxDuration = 120;
 
@@ -58,7 +59,8 @@ export async function POST(request: Request) {
   // Free-generation quota: each account may hold a limited number of unpaid
   // plans. Unlocking a plan frees up a slot, so paying users keep creating.
   // Legacy anonymous plans (user_id null) aren't counted or restricted.
-  if (user) {
+  // Admins bypass the quota entirely (unlimited plan generation for testing).
+  if (user && !isAdminEmail(user.email)) {
     const limit = Number(process.env.FREE_PLAN_LIMIT ?? 3);
     const { count } = await supabase
       .from("travel_plans")
