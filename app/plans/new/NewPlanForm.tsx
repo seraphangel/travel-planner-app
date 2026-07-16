@@ -1,22 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-
-const BUDGET_OPTIONS = [
-  "",
-  "$500-$1000",
-  "$1000-$2000",
-  "$2000-$3500",
-  "$3500-$5000",
-  "$5000+",
-];
+import { CURRENCIES, budgetOptions } from "@/lib/currencies";
 
 export default function NewPlanForm() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [currency, setCurrency] = useState("USD");
+
+  // Remember the traveller's currency across visits.
+  useEffect(() => {
+    const saved = localStorage.getItem("wayfare_currency");
+    if (saved && CURRENCIES.some((c) => c.code === saved)) setCurrency(saved);
+  }, []);
+  function onCurrencyChange(code: string) {
+    setCurrency(code);
+    localStorage.setItem("wayfare_currency", code);
+  }
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -32,6 +35,7 @@ export default function NewPlanForm() {
       end_date: String(form.get("end_date") ?? ""),
       budget_range: String(form.get("budget_range") ?? ""),
       trip_purpose: String(form.get("trip_purpose") ?? "holiday"),
+      currency,
     };
 
     // Inline validation — no API call on invalid input (docs/TEST_PLAN.md)
@@ -109,14 +113,38 @@ export default function NewPlanForm() {
           </div>
         </div>
 
-        <div>
-          <label htmlFor="budget_range" className="font-medium">Budget (optional)</label>
-          <select id="budget_range" name="budget_range" className={inputClass} defaultValue="">
-            {BUDGET_OPTIONS.map((b) => (
-              <option key={b} value={b}>{b === "" ? "Flexible / not sure" : b}</option>
-            ))}
-          </select>
+        <div className="grid grid-cols-[8.5rem_1fr] gap-4">
+          <div>
+            <label htmlFor="currency" className="font-medium">Currency</label>
+            <select
+              id="currency"
+              value={currency}
+              onChange={(e) => onCurrencyChange(e.target.value)}
+              className={inputClass}
+              aria-label="Currency for budget and prices"
+            >
+              {CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} ({c.symbol})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="budget_range" className="font-medium">Budget (optional)</label>
+            {/* key forces re-mount so the default resets when currency changes */}
+            <select id="budget_range" name="budget_range" className={inputClass} defaultValue="" key={currency}>
+              <option value="">Flexible / not sure</option>
+              {budgetOptions(currency).map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
         </div>
+        <p className="-mt-3 text-xs text-slate-400">
+          Your plan&apos;s prices and budget will be shown in this currency.
+          Plan unlocks are charged in USD.
+        </p>
 
         <fieldset>
           <legend className="font-medium">Trip purpose</legend>

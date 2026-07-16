@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canEditPlan } from "@/lib/permissions";
 import { generateSingleDay } from "@/lib/generation";
 import { writeAuditLog } from "@/lib/audit";
+import { currencyFromBudgetString } from "@/lib/currencies";
 
 export const maxDuration = 120;
 
@@ -110,6 +111,7 @@ export async function POST(request: Request) {
         origin_country: plan.origin_country,
         trip_purpose: plan.trip_purpose,
         budget_range: plan.budget_range,
+      currency: currencyFromBudgetString(plan.budget_range),
         duration_days: plan.duration_days ?? dayNumber,
         start_date: plan.start_date,
       },

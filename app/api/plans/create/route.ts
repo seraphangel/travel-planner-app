@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { generatePlanContent, persistGeneration } from "@/lib/generation";
 import { writeAuditLog } from "@/lib/audit";
 import { isAdminEmail } from "@/lib/permissions";
+import { getCurrency } from "@/lib/currencies";
 
 export const maxDuration = 120;
 
@@ -31,6 +32,9 @@ export async function POST(request: Request) {
   const endDate = String(body.end_date ?? "").trim();
   const budget = String(body.budget_range ?? "").trim() || null;
   const purpose = String(body.trip_purpose ?? "holiday").trim();
+  // Currency the traveller thinks in — drives budget display and the
+  // currency all AI-generated prices are quoted in. Unknown codes → USD.
+  const currency = getCurrency(String(body.currency ?? "USD"));
 
   if (!destinationRaw) return NextResponse.json({ error: "Destination is required" }, { status: 400 });
   if (!origin) return NextResponse.json({ error: "Origin country is required" }, { status: 400 });
@@ -127,6 +131,7 @@ export async function POST(request: Request) {
       budget_range: budget,
       duration_days: durationDays,
       start_date: startDate,
+      currency,
     });
     await persistGeneration(supabase, plan, content);
     await supabase.from("travel_plans").update({ status: "published" }).eq("id", plan.id);

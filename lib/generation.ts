@@ -3,6 +3,7 @@ import {
   RECOMMENDATION_CATEGORIES,
   type RecommendationCategory,
 } from "@/lib/types";
+import { DEFAULT_CURRENCY, type Currency } from "@/lib/currencies";
 
 export type GenerationInput = {
   city: string;
@@ -12,6 +13,8 @@ export type GenerationInput = {
   budget_range: string | null;
   duration_days: number;
   start_date: string | null; // ISO date of day 1
+  // Currency all generated prices should be quoted in (defaults to USD).
+  currency?: Currency;
 };
 
 export type GeneratedRecommendation = {
@@ -101,6 +104,7 @@ async function generateWithOpenAI(
   input: GenerationInput,
 ): Promise<GeneratedContent> {
   const model = process.env.OPENAI_MODEL ?? "gpt-4o";
+  const cur = input.currency ?? DEFAULT_CURRENCY;
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -128,12 +132,12 @@ async function generateWithOpenAI(
             "- flights: name real airlines that fly the route, typical routing (direct or via which hub), approximate current round-trip cost and flight time.\n" +
             "- local_transport: the city's actual systems, passes and typical fares (e.g. Suica/Pasmo, T-casual, Oyster).\n" +
             "- itinerary entries must reference the named places from your recommendations, in a geographically sensible order.\n" +
-            "- price_range: a realistic figure or range in USD (or $ / $$ / $$$ for restaurants). rating: 0-5, your honest quality estimate.\n" +
+            `- price_range: a realistic figure or range in ${cur.code}, formatted with the ${cur.symbol} symbol (or ${cur.symbol} / ${cur.symbol}${cur.symbol} / ${cur.symbol}${cur.symbol}${cur.symbol} tiers for restaurants). ALL prices — flights, hotels, transport, entry fees — must be quoted in ${cur.code}. rating: 0-5, your honest quality estimate.\n` +
             "- confidence: 0-1 per item — how certain you are the place is still operating and details are accurate. Use lower values for prices and schedules, which change.",
         },
         {
           role: "user",
-          content: `Plan a trip:\n- Destination: ${input.city}, ${input.country}\n- Origin: ${input.origin_country}\n- Duration: ${input.duration_days} days\n- Budget: ${input.budget_range ?? "flexible"}\n- Purpose: ${input.trip_purpose}${input.start_date ? `\n- Travel dates: starting ${input.start_date} (consider the season)` : ""}\nInclude realistic flight guidance from ${input.origin_country} and the city's real local transport options. Remember: the itinerary must cover all ${input.duration_days} days individually.`,
+          content: `Plan a trip:\n- Destination: ${input.city}, ${input.country}\n- Origin: ${input.origin_country}\n- Duration: ${input.duration_days} days\n- Budget: ${input.budget_range ?? "flexible"}\n- Purpose: ${input.trip_purpose}${input.start_date ? `\n- Travel dates: starting ${input.start_date} (consider the season)` : ""}\nInclude realistic flight guidance from ${input.origin_country} and the city's real local transport options. Quote every price in ${cur.code}. Remember: the itinerary must cover all ${input.duration_days} days individually.`,
         },
       ],
     }),
@@ -246,7 +250,7 @@ async function generateDayWithOpenAI(
         },
         {
           role: "user",
-          content: `Plan day ${dayNumber} of a ${input.duration_days}-day ${input.trip_purpose} trip to ${input.city}, ${input.country} (traveller from ${input.origin_country}, budget ${input.budget_range ?? "flexible"}). Propose a DIFFERENT angle on the city than a typical itinerary would have for this day — this is a regeneration, so avoid the most obvious picks.`,
+          content: `Plan day ${dayNumber} of a ${input.duration_days}-day ${input.trip_purpose} trip to ${input.city}, ${input.country} (traveller from ${input.origin_country}, budget ${input.budget_range ?? "flexible"}). Quote any prices in ${(input.currency ?? DEFAULT_CURRENCY).code}. Propose a DIFFERENT angle on the city than a typical itinerary would have for this day — this is a regeneration, so avoid the most obvious picks.`,
         },
       ],
     }),
@@ -286,20 +290,23 @@ function generateFromTemplates(input: GenerationInput): GeneratedContent {
   const budget = input.budget_range ?? "a flexible budget";
   const business = input.trip_purpose === "business";
   const c = 0.6; // below the 0.7 review threshold → UI shows "verify before booking"
+  // Price tiers in the trip's currency ($ / $$ → € / €€ etc.)
+  const t1 = (input.currency ?? DEFAULT_CURRENCY).symbol;
+  const t2 = t1 + t1;
 
   const recommendations: GeneratedRecommendation[] = [
-    { category: "places_to_visit", name: `${city} Old Town & Historic Center`, description: `Start with the historic heart of ${city} — the main squares, landmark architecture, and museums cluster here, and most walking tours depart from it.`, location: `Central ${city}`, price_range: "$", rating: 4.6, value: "Best first-day orientation to the city", confidence: c },
-    { category: "places_to_visit", name: `${city} Signature Landmark & Viewpoint`, description: `Every visit to ${city} should include its best-known landmark and the highest public viewpoint for a panorama of the city.`, location: city, price_range: "$$", rating: 4.7, value: "The classic photo stop", confidence: c },
+    { category: "places_to_visit", name: `${city} Old Town & Historic Center`, description: `Start with the historic heart of ${city} — the main squares, landmark architecture, and museums cluster here, and most walking tours depart from it.`, location: `Central ${city}`, price_range: t1, rating: 4.6, value: "Best first-day orientation to the city", confidence: c },
+    { category: "places_to_visit", name: `${city} Signature Landmark & Viewpoint`, description: `Every visit to ${city} should include its best-known landmark and the highest public viewpoint for a panorama of the city.`, location: city, price_range: t2, rating: 4.7, value: "The classic photo stop", confidence: c },
     { category: "places_to_visit", name: `Markets & Neighborhood Walks`, description: `Local markets and residential quarters show the everyday side of ${city}; go in the morning when stalls are busiest.`, location: city, price_range: "Free", rating: 4.4, value: "Local culture beyond the sights", confidence: c },
-    { category: "places_to_eat", name: `Traditional ${country} Cuisine`, description: `Book one dinner at a well-reviewed traditional restaurant to try ${country}'s signature dishes; ask staff for the regional specialty.`, location: city, price_range: "$$", rating: 4.5, value: "The must-try national dishes", confidence: c },
-    { category: "places_to_eat", name: `${city} Street Food & Market Stalls`, description: `Cheapest and often best food in ${city} — follow the queues of locals at lunchtime.`, location: city, price_range: "$", rating: 4.4, value: "Big flavor on a small budget", confidence: c },
-    { category: "places_to_eat", name: business ? "Business-Friendly Restaurants" : "Café Culture", description: business ? `Quieter restaurants near the business district of ${city}, suitable for client meetings — reserve ahead.` : `Spend a slow morning in ${city}'s café scene; a good mid-trip recovery ritual.`, location: city, price_range: "$$", rating: 4.3, value: business ? "Reliable for meetings" : "Recharge between sights", confidence: c },
-    { category: "places_to_stay", name: `Central ${city} Boutique Hotel`, description: `Staying central in ${city} saves transit time; boutique hotels balance character and comfort within ${budget}.`, location: `Central ${city}`, price_range: "$$", rating: 4.4, value: "Walk to the main sights", confidence: c },
-    { category: "places_to_stay", name: `Aparthotel / Serviced Apartment`, description: `For stays of ${duration_days}+ days, a serviced apartment with a kitchen cuts food costs and adds space.`, location: city, price_range: "$$", rating: 4.3, value: "Best value for longer stays", confidence: c },
+    { category: "places_to_eat", name: `Traditional ${country} Cuisine`, description: `Book one dinner at a well-reviewed traditional restaurant to try ${country}'s signature dishes; ask staff for the regional specialty.`, location: city, price_range: t2, rating: 4.5, value: "The must-try national dishes", confidence: c },
+    { category: "places_to_eat", name: `${city} Street Food & Market Stalls`, description: `Cheapest and often best food in ${city} — follow the queues of locals at lunchtime.`, location: city, price_range: t1, rating: 4.4, value: "Big flavor on a small budget", confidence: c },
+    { category: "places_to_eat", name: business ? "Business-Friendly Restaurants" : "Café Culture", description: business ? `Quieter restaurants near the business district of ${city}, suitable for client meetings — reserve ahead.` : `Spend a slow morning in ${city}'s café scene; a good mid-trip recovery ritual.`, location: city, price_range: t2, rating: 4.3, value: business ? "Reliable for meetings" : "Recharge between sights", confidence: c },
+    { category: "places_to_stay", name: `Central ${city} Boutique Hotel`, description: `Staying central in ${city} saves transit time; boutique hotels balance character and comfort within ${budget}.`, location: `Central ${city}`, price_range: t2, rating: 4.4, value: "Walk to the main sights", confidence: c },
+    { category: "places_to_stay", name: `Aparthotel / Serviced Apartment`, description: `For stays of ${duration_days}+ days, a serviced apartment with a kitchen cuts food costs and adds space.`, location: city, price_range: t2, rating: 4.3, value: "Best value for longer stays", confidence: c },
     { category: "flights", name: `${origin_country} → ${city}`, description: `Compare fares 6–10 weeks out; midweek departures from ${origin_country} are usually cheapest. Check both direct routes and one-stop options via major hubs.`, price_range: "Varies by season", value: "Book midweek, 6–10 weeks ahead", confidence: c },
-    { category: "flights", name: "Airport to City Transfer", description: `Research the rail/express-bus link from ${city}'s main airport before landing — almost always cheaper than a taxi and immune to traffic.`, price_range: "$", value: "Skip the taxi queue", confidence: c },
-    { category: "local_transport", name: `${city} Public Transit Pass`, description: `A multi-day transit pass typically pays for itself after 3 rides per day; buy at the airport or main station on arrival.`, price_range: "$", value: "Cheapest way around", confidence: c },
-    { category: "local_transport", name: "Walking + Ride-hailing Combo", description: `Central ${city} is best on foot; use a ride-hailing app for evenings and cross-town hops.`, price_range: "$", value: "Flexible after dark", confidence: c },
+    { category: "flights", name: "Airport to City Transfer", description: `Research the rail/express-bus link from ${city}'s main airport before landing — almost always cheaper than a taxi and immune to traffic.`, price_range: t1, value: "Skip the taxi queue", confidence: c },
+    { category: "local_transport", name: `${city} Public Transit Pass`, description: `A multi-day transit pass typically pays for itself after 3 rides per day; buy at the airport or main station on arrival.`, price_range: t1, value: "Cheapest way around", confidence: c },
+    { category: "local_transport", name: "Walking + Ride-hailing Combo", description: `Central ${city} is best on foot; use a ride-hailing app for evenings and cross-town hops.`, price_range: t1, value: "Flexible after dark", confidence: c },
     { category: "safety_health", name: "Travel Insurance & Documents", description: `Confirm passport validity (6+ months), any visa requirements for ${country} from ${origin_country}, and carry travel insurance covering medical care.`, value: "Check entry rules before booking", confidence: c },
     { category: "safety_health", name: `Local Safety Basics in ${city}`, description: `Note the local emergency number, keep valuables zipped in crowded areas, and check your government's current travel advisory for ${country}.`, value: "Standard precautions apply", confidence: c },
   ];
