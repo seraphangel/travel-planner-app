@@ -58,6 +58,7 @@ export async function POST(request: Request) {
         recommendations: content.recommendations.length,
         days: content.itinerary.length,
         usage: content.usage ?? null,
+        padded_days: content.padded_days ?? 0,
       },
       risk_level: "low",
     });

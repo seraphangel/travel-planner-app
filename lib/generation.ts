@@ -42,6 +42,8 @@ export type GeneratedContent = {
   source: string;
   // Actual token spend reported by the model API (absent for template runs).
   usage?: { prompt_tokens: number; completion_tokens: number };
+  // Days the model failed to return that were filled from templates.
+  padded_days?: number;
 };
 
 /**
@@ -109,6 +111,10 @@ async function generateWithOpenAI(
       model,
       response_format: { type: "json_object" },
       temperature: 0.7,
+      // Long trips need room: a 15-day itinerary plus ~25 recommendations
+      // runs several thousand tokens. Without this the model abbreviates and
+      // the template padding kicks in for the missing days.
+      max_tokens: 16000,
       messages: [
         {
           role: "system",
@@ -116,7 +122,9 @@ async function generateWithOpenAI(
             "You are an expert travel planner with deep destination knowledge. Respond ONLY with valid JSON matching exactly this schema (4-6 items per recommendation category, one itinerary entry per day):\n" +
             PROMPT_SCHEMA +
             "\nHard rules:\n" +
+            "- The itinerary array MUST contain one entry for EVERY day of the trip, day 1 through the final day, with no gaps and no abbreviation. A 15-day trip means exactly 15 itinerary entries. Never summarize multiple days into one entry or stop early.\n" +
             "- Every recommendation must be a REAL, specific, named place that exists: actual attractions, actual restaurants (with neighborhood), actual hotels. Never output generic filler like 'signature landmark', 'local market' or 'boutique hotel' without a proper name.\n" +
+            "- Itinerary activities must also name real places — every morning/afternoon/evening should mention a specific named location, dish or venue.\n" +
             "- flights: name real airlines that fly the route, typical routing (direct or via which hub), approximate current round-trip cost and flight time.\n" +
             "- local_transport: the city's actual systems, passes and typical fares (e.g. Suica/Pasmo, T-casual, Oyster).\n" +
             "- itinerary entries must reference the named places from your recommendations, in a geographically sensible order.\n" +
@@ -125,7 +133,7 @@ async function generateWithOpenAI(
         },
         {
           role: "user",
-          content: `Plan a trip:\n- Destination: ${input.city}, ${input.country}\n- Origin: ${input.origin_country}\n- Duration: ${input.duration_days} days\n- Budget: ${input.budget_range ?? "flexible"}\n- Purpose: ${input.trip_purpose}${input.start_date ? `\n- Travel dates: starting ${input.start_date} (consider the season)` : ""}\nInclude realistic flight guidance from ${input.origin_country} and the city's real local transport options.`,
+          content: `Plan a trip:\n- Destination: ${input.city}, ${input.country}\n- Origin: ${input.origin_country}\n- Duration: ${input.duration_days} days\n- Budget: ${input.budget_range ?? "flexible"}\n- Purpose: ${input.trip_purpose}${input.start_date ? `\n- Travel dates: starting ${input.start_date} (consider the season)` : ""}\nInclude realistic flight guidance from ${input.origin_country} and the city's real local transport options. Remember: the itinerary must cover all ${input.duration_days} days individually.`,
         },
       ],
     }),
@@ -186,12 +194,17 @@ async function generateWithOpenAI(
   if (recommendations.length === 0 || itinerary.length === 0) {
     throw new Error("OpenAI response missing recommendations or itinerary");
   }
-  // Model sometimes returns fewer days than requested — pad from templates so
-  // every plan has exactly duration_days days.
+  // Last resort if the model still returns fewer days than requested — pad
+  // from templates so every plan has exactly duration_days days. The count
+  // is surfaced in the audit log so silent padding is visible.
   const have = new Set(itinerary.map((d) => d.day_number));
   const fallback = generateFromTemplates(input);
+  let paddedDays = 0;
   for (const day of fallback.itinerary) {
-    if (!have.has(day.day_number)) itinerary.push(day);
+    if (!have.has(day.day_number)) {
+      itinerary.push(day);
+      paddedDays++;
+    }
   }
   itinerary.sort((a, b) => a.day_number - b.day_number);
 
@@ -199,6 +212,7 @@ async function generateWithOpenAI(
     recommendations,
     itinerary,
     source: `openai-${model}`,
+    padded_days: paddedDays,
     usage: data.usage
       ? {
           prompt_tokens: Number(data.usage.prompt_tokens ?? 0),
