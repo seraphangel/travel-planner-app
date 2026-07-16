@@ -16,6 +16,7 @@ import UnlockButton from "./UnlockButton";
 import RegenerateButton from "./RegenerateButton";
 import RegenerateDayButton from "./RegenerateDayButton";
 import EditPlanDates from "./EditPlanDates";
+import ClaimPlanButton from "./ClaimPlanButton";
 import TripPoster from "./TripPoster";
 
 export const dynamic = "force-dynamic";
@@ -165,9 +166,14 @@ export default async function PlanPage({
             {p.budget_range && <span className="rounded-full bg-white border border-slate-200 px-3 py-1">💰 {p.budget_range}</span>}
             <span className="rounded-full bg-white border border-slate-200 px-3 py-1 capitalize">🎯 {p.trip_purpose}</span>
           </div>
-          {canEdit && (
-            <div className="mt-3">
-              <EditPlanDates planId={p.id} startDate={p.start_date} endDate={p.end_date} />
+          {(canEdit || admin) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {canEdit && (
+                <EditPlanDates planId={p.id} startDate={p.start_date} endDate={p.end_date} />
+              )}
+              {admin && !isDemoPlan(p.id) && p.user_id !== user?.id && (
+                <ClaimPlanButton planId={p.id} />
+              )}
             </div>
           )}
         </div>
