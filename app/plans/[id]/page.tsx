@@ -18,6 +18,10 @@ import RegenerateDayButton from "./RegenerateDayButton";
 import EditPlanDates from "./EditPlanDates";
 import ClaimPlanButton from "./ClaimPlanButton";
 import TripPoster from "./TripPoster";
+import DayTimeline from "./DayTimeline";
+import GenerationProgress from "./GenerationProgress";
+import { parseSchedule } from "@/lib/schedule";
+import { getCurrency } from "@/lib/currencies";
 
 export const dynamic = "force-dynamic";
 
@@ -80,8 +84,12 @@ export default async function PlanPage({
   const canEdit = canEditPlan(p, user?.id);
   const admin = isAdminEmail(user?.email);
 
-  const recommendations = (recs ?? []) as PlanRecommendation[];
+  // The `_research` row is pipeline storage, never a visible recommendation.
+  const recommendations = ((recs ?? []) as PlanRecommendation[]).filter(
+    (r) => !String(r.category).startsWith("_"),
+  );
   const itinerary = (days ?? []) as ItineraryDay[];
+  const generating = String(p.status ?? "").startsWith("enrich:");
   // Admins see plans as fully unlocked so they can test the premium
   // experience (photo collage, all days) without paying.
   const unlocked = p.is_unlocked || isDemoPlan(p.id) || admin;
@@ -186,8 +194,11 @@ export default async function PlanPage({
         )}
       </div>
 
+      {/* Async generation in progress: research → recommendations → day chunks */}
+      {generating && <GenerationProgress planId={p.id} initialStatus={String(p.status)} />}
+
       {/* Empty state: plan exists but nothing generated */}
-      {isEmpty ? (
+      {isEmpty && !generating ? (
         <div className="mt-10 rounded-xl border border-slate-200 bg-white p-10 text-center">
           <div className="text-3xl" aria-hidden>🗺️</div>
           <h2 className="mt-3 text-xl font-semibold">No recommendations yet</h2>
@@ -196,7 +207,7 @@ export default async function PlanPage({
           </p>
           <RegenerateButton planId={p.id} label="Generate plan" />
         </div>
-      ) : (
+      ) : isEmpty ? null : (
         <>
           {/* Recommendations */}
           <section className="mt-10" aria-labelledby="recs-heading">
@@ -241,9 +252,24 @@ export default async function PlanPage({
 
           {/* Itinerary */}
           <section className="mt-10" aria-labelledby="itinerary-heading">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="itinerary-heading" className="text-2xl font-bold">Day-by-day itinerary</h2>
               {itinerary.length === 0 && <RegenerateButton planId={p.id} label="Generate itinerary" />}
+              {(() => {
+                const schedules = itinerary
+                  .map((d) => parseSchedule(d.notes))
+                  .filter((s): s is NonNullable<typeof s> => s !== null);
+                if (schedules.length === 0) return null;
+                const total = schedules.reduce((sum, s) => sum + (s.totals?.total ?? 0), 0);
+                const symbol = getCurrency(schedules[0].cur).symbol;
+                return (
+                  <span className="text-sm text-slate-600">
+                    Est. on-the-ground cost ≈{" "}
+                    <strong>{symbol}{Math.round(total).toLocaleString("en-US")}</strong>/person
+                    {p.budget_range ? ` · budget ${p.budget_range}` : ""}
+                  </span>
+                );
+              })()}
             </div>
             <div className="mt-4 space-y-4">
               {itinerary.length === 0 && (
@@ -260,18 +286,26 @@ export default async function PlanPage({
                     </h3>
                     {d.day_date && <span className="text-sm text-slate-500">{d.day_date}</span>}
                   </header>
-                  <dl className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
-                    <div><dt className="font-medium text-slate-500">🌅 Morning</dt><dd className="mt-0.5">{d.morning_activity ?? "—"}</dd></div>
-                    <div><dt className="font-medium text-slate-500">☀️ Afternoon</dt><dd className="mt-0.5">{d.afternoon_activity ?? "—"}</dd></div>
-                    <div><dt className="font-medium text-slate-500">🌙 Evening</dt><dd className="mt-0.5">{d.evening_activity ?? "—"}</dd></div>
-                  </dl>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm text-slate-600">
-                    {d.meals && <p>🍽️ {d.meals}</p>}
-                    {d.transport_notes && <p>🚉 {d.transport_notes}</p>}
-                  </div>
-                  {(d.itinerary_confidence ?? 1) < 0.7 && (
-                    <p className="mt-2 text-xs text-amber-600">⚠️ AI-generated — verify before booking</p>
-                  )}
+                  {(() => {
+                    const schedule = parseSchedule(d.notes);
+                    if (schedule) return <DayTimeline schedule={schedule} />;
+                    return (
+                      <>
+                        <dl className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
+                          <div><dt className="font-medium text-slate-500">🌅 Morning</dt><dd className="mt-0.5">{d.morning_activity ?? "—"}</dd></div>
+                          <div><dt className="font-medium text-slate-500">☀️ Afternoon</dt><dd className="mt-0.5">{d.afternoon_activity ?? "—"}</dd></div>
+                          <div><dt className="font-medium text-slate-500">🌙 Evening</dt><dd className="mt-0.5">{d.evening_activity ?? "—"}</dd></div>
+                        </dl>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm text-slate-600">
+                          {d.meals && <p>🍽️ {d.meals}</p>}
+                          {d.transport_notes && <p>🚉 {d.transport_notes}</p>}
+                        </div>
+                        {(d.itinerary_confidence ?? 1) < 0.7 && (
+                          <p className="mt-2 text-xs text-amber-600">⚠️ AI-generated — verify before booking</p>
+                        )}
+                      </>
+                    );
+                  })()}
                   {canEdit && <RegenerateDayButton planId={p.id} dayNumber={d.day_number} />}
                 </article>
               ))}

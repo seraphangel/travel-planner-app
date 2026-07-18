@@ -94,6 +94,12 @@ export async function POST(request: Request) {
       ? `${city} Business Trip`
       : `${durationDays} Days in ${city}`;
 
+  // With an AI key, generation runs asynchronously via /api/plans/generate-step
+  // (live research + chunked compose won't fit one request). The plan page
+  // drives the steps and shows progress. Without a key, templates are instant
+  // so we keep the old synchronous path.
+  const aiConfigured = Boolean(process.env.OPENAI_API_KEY);
+
   const { data: plan, error: planError } = await supabase
     .from("travel_plans")
     .insert({
@@ -106,7 +112,7 @@ export async function POST(request: Request) {
       start_date: startDate,
       end_date: endDate,
       duration_days: durationDays,
-      status: "draft",
+      status: aiConfigured ? "enrich:queued" : "draft",
       is_unlocked: false,
     })
     .select()
@@ -118,9 +124,13 @@ export async function POST(request: Request) {
     entity_type: "travel_plan",
     entity_id: plan.id,
     user_id: user?.id ?? null,
-    detail: { destination: `${city}, ${country}`, duration_days: durationDays, purpose, budget },
+    detail: { destination: `${city}, ${country}`, duration_days: durationDays, purpose, budget, async: aiConfigured },
     risk_level: "low",
   });
+
+  if (aiConfigured) {
+    return NextResponse.json({ id: plan.id, async: true });
+  }
 
   try {
     const content = await generatePlanContent({

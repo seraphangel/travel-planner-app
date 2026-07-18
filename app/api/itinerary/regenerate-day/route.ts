@@ -55,6 +55,9 @@ export async function POST(request: Request) {
     if (!draft) return NextResponse.json({ error: "draft is required to apply" }, { status: 400 });
 
     const fields = {
+      // Single-day drafts are in the simple format; clear any rich schedule
+      // JSON so the day renders the draft rather than stale timeline data.
+      notes: null as string | null,
       morning_activity: String(draft.morning ?? ""),
       afternoon_activity: String(draft.afternoon ?? ""),
       evening_activity: String(draft.evening ?? ""),

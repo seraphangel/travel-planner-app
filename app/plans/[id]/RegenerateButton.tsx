@@ -18,10 +18,12 @@ export default function RegenerateButton({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/plans/generate", {
+      // Kick off (or restart) the resumable generation pipeline; the plan
+      // page's progress component drives the remaining steps after refresh.
+      const res = await fetch("/api/plans/generate-step", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId }),
+        body: JSON.stringify({ planId, restart: true }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Generation failed");
