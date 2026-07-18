@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { currencyFromBudgetString } from "@/lib/currencies";
 import { countPlanAudits, dayRegenLimit } from "@/lib/limits";
 import { isDemoPlan } from "@/lib/types";
+import { parseSchedule, placeTitlesFrom } from "@/lib/schedule";
 
 export const maxDuration = 120;
 
@@ -126,6 +127,18 @@ export async function POST(request: Request) {
     );
   }
 
+  // Places used on the OTHER days of this plan, so the new day doesn't repeat them.
+  const { data: otherDays } = await supabase
+    .from("itinerary_days")
+    .select("notes")
+    .eq("travel_plan_id", plan.id)
+    .neq("day_number", dayNumber);
+  const avoidPlaces: string[] = [];
+  for (const d of otherDays ?? []) {
+    const s = parseSchedule(d.notes);
+    if (s) avoidPlaces.push(...placeTitlesFrom(s));
+  }
+
   try {
     const day = await generateSingleDay(
       {
@@ -134,9 +147,10 @@ export async function POST(request: Request) {
         origin_country: plan.origin_country,
         trip_purpose: plan.trip_purpose,
         budget_range: plan.budget_range,
-      currency: currencyFromBudgetString(plan.budget_range),
+        currency: currencyFromBudgetString(plan.budget_range),
         duration_days: plan.duration_days ?? dayNumber,
         start_date: plan.start_date,
+        avoidPlaces,
       },
       dayNumber,
     );

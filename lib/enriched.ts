@@ -1,7 +1,7 @@
 import type { GenerationInput, GeneratedRecommendation } from "@/lib/generation";
 import { RECOMMENDATION_CATEGORIES, type RecommendationCategory } from "@/lib/types";
 import { DEFAULT_CURRENCY } from "@/lib/currencies";
-import type { DaySchedule, ScheduleBlock } from "@/lib/schedule";
+import { normalizePlace, type DaySchedule, type ScheduleBlock } from "@/lib/schedule";
 import type { ResearchResult } from "@/lib/research";
 
 /**
@@ -70,7 +70,8 @@ export async function composeRecommendations(
     `You turn verified research notes into travel recommendations. Respond ONLY with JSON: ` +
     `{"recommendations": {"places_to_visit": [...], "places_to_eat": [...], "places_to_stay": [...], "flights": [...], "local_transport": [...], "safety_health": [...]}} ` +
     `where each item is {"name","description","location","price_range","rating",0-5,"value","confidence",0-1}. ` +
-    `4-6 items per category, REAL named places only, all prices in ${cur.code} with the ${cur.symbol} symbol. ` +
+    `4-6 items per category, REAL named places only, every place UNIQUE (never list the same place twice), all prices in ${cur.code} with the ${cur.symbol} symbol. ` +
+    `For places_to_eat specifically: SPAN THE PRICE RANGE — include at least two budget options (${cur.symbol}, cheap eats / street food / local diners) AND at least one upscale option (${cur.symbol}${cur.symbol}${cur.symbol}, fine dining / famous specialty), and note the tier in each description. ` +
     `Set confidence 0.9+ only for facts present in the research notes; anything from general knowledge gets <=0.7.`;
   const { parsed, usage } = await chatJSON(system, tripContext(input, research), 6000);
 
@@ -100,7 +101,7 @@ export async function composeRecommendations(
 // ── Day chunks ───────────────────────────────────────────────────────────────
 
 const DAY_SCHEMA = `{"days":[{"day":1,"summary":"","start":"08:30","area":"","weather_note":"","blocks":[
-{"t":"08:30","dur":45,"kind":"breakfast","title":"","desc":"","costs":{"food":0}},
+{"t":"08:30","dur":45,"kind":"breakfast","title":"","desc":"","costs":{"food":0},"alt":{"title":"","desc":"","food":0,"tier":"upscale"}},
 {"t":"09:30","dur":120,"kind":"sight","title":"","desc":"","why_time":"","open_note":"","transit":{"mode":"train","route":"","mins":0,"cost":0},"costs":{"transport":0,"entry":0},"book":{"required":false,"url":""},"map":"","sources":[""]}
 ]}]}`;
 
@@ -109,14 +110,15 @@ export async function composeDaysChunk(
   research: ResearchResult,
   fromDay: number,
   toDay: number,
-  previousAreas: string[],
-): Promise<{ days: { n: number; schedule: DaySchedule; summary: string }[]; usage?: Usage }> {
+  usedPlaces: string[],
+): Promise<{ days: { n: number; schedule: DaySchedule; summary: string }[]; usedPlaces: string[]; usage?: Usage }> {
   const cur = input.currency ?? DEFAULT_CURRENCY;
-  const system =
+  const baseSystem =
     `You build detailed daily itineraries from verified research notes. Respond ONLY with JSON matching:\n${DAY_SCHEMA}\n` +
     `Rules:\n` +
     `- Produce EXACTLY days ${fromDay} through ${toDay} (numbered), each with 5-8 blocks in chronological order.\n` +
     `- Every day includes: a recommended start time, breakfast AND lunch AND dinner blocks (kind breakfast/lunch/dinner) at real named places with per-person food cost, and one "evening" block with a non-dinner option (night view, cruise, show, market, onsen, bar street) including its cost.\n` +
+    `- For EVERY meal block (breakfast/lunch/dinner), the "title" is the primary pick with its costs.food, AND "alt" is a real alternative at a DIFFERENT price tier: if the primary is affordable, alt.tier="upscale" (a nicer splurge option); if the primary is high-end, alt.tier="budget" (a cheaper local option). alt.food is that option's per-person cost. Never leave alt empty on a meal.\n` +
     `- kind "sight" blocks: real named places; dur = realistic minutes needed; why_time = when to go and why (crowds/light/heat); open_note = opening hours and weekly closing day if known.\n` +
     `- transit on every block that moves location: mode, concrete route (line/bus number, stations), minutes, cost in ${cur.code}. Group each day by area to minimize backtracking.\n` +
     `- costs: numbers in ${cur.code} (no symbols, no strings). Omit fields that are zero.\n` +
@@ -124,36 +126,103 @@ export async function composeDaysChunk(
     `- map: a Google Maps search string for the place.\n` +
     `- sources: source domains/URLs from the research notes backing the facts.\n` +
     `- Respect weekly closing days from the notes when placing sights on dated days${input.start_date ? ` (day 1 = ${input.start_date})` : ""}.\n` +
-    `- Do not repeat places already used on previous days (areas covered so far: ${previousAreas.join(", ") || "none"}).` +
+    `- NO REPEATS: every sight, restaurant and evening venue across the ENTIRE trip must be UNIQUE. Never suggest a place — as a primary OR an alt — that appears in the "already used" list below, and never reuse a place across the days in this batch. A city has many options; a repeated place reads as lazy and is unacceptable.` +
     (fromDay === 1 ? `\n- Day 1 must account for arrival logistics; ` : "") +
     (toDay === input.duration_days ? `\n- The final day must account for checkout and departure.` : "");
 
   const expected = toDay - fromDay + 1;
   const dayList = Array.from({ length: expected }, (_, i) => fromDay + i).join(", ");
+  const usedList = usedPlaces.length
+    ? `ALREADY USED on earlier days — do NOT suggest any of these again:\n${usedPlaces.map((p) => `- ${p}`).join("\n")}\n\n`
+    : "";
   const baseUser =
     `REQUIRED: the "days" array must contain EXACTLY ${expected} fully-detailed entries, one for each of day ${dayList}. Never stop early.\n\n` +
+    usedList +
     tripContext(input, research) +
-    `\n\nCompose days ${fromDay}-${toDay} now.`;
+    `\n\nCompose days ${fromDay}-${toDay} now, with all-unique places and budget/upscale meal alternatives.`;
 
-  let { parsed, usage } = await chatJSON(system, baseUser, 15000);
-  let days = buildDays(parsed, fromDay, toDay, cur.code, research.searched_at, input.city);
+  const seen = new Set(usedPlaces.map(normalizePlace));
 
-  // The model occasionally abbreviates long ranges — one automatic retry with
-  // a sterner instruction before surfacing an error to the user.
-  if (days.length !== expected) {
-    ({ parsed, usage } = await chatJSON(
-      system,
-      `YOUR PREVIOUS ATTEMPT FAILED: it returned too few days. This time return EXACTLY ${expected} complete day objects (days ${dayList}), each with 5-8 blocks. Do not summarize or stop early.\n\n` +
-        baseUser,
-      15000,
-    ));
-    days = buildDays(parsed, fromDay, toDay, cur.code, research.searched_at, input.city);
+  // Up to 3 attempts: fix wrong day count OR internal/cross-day duplicates.
+  let days: { n: number; schedule: DaySchedule; summary: string }[] = [];
+  let usage: Usage | undefined;
+  let system = baseSystem;
+  let user = baseUser;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await chatJSON(system, user, 15000);
+    usage = result.usage;
+    days = buildDays(result.parsed, fromDay, toDay, cur.code, research.searched_at, input.city);
+
+    const problems: string[] = [];
+    if (days.length !== expected) {
+      problems.push(`Return EXACTLY ${expected} day objects (days ${dayList}); you returned ${days.length}.`);
+    }
+    const dupes = findDuplicates(days, seen);
+    if (dupes.length) {
+      problems.push(`These places are repeats and must be replaced with different real places: ${dupes.join(", ")}.`);
+    }
+    if (problems.length === 0) break;
+
+    system = baseSystem;
+    user =
+      `YOUR PREVIOUS ATTEMPT HAD PROBLEMS:\n${problems.map((p) => `- ${p}`).join("\n")}\n` +
+      `Regenerate the full batch fixing these. Keep every place unique across the whole trip.\n\n` +
+      baseUser;
   }
 
   if (days.length !== expected) {
     throw new Error(`Compose returned ${days.length} days for range ${fromDay}-${toDay}`);
   }
-  return { days, usage };
+
+  // Final safety net: drop any block that still duplicates a place, so a
+  // stubborn model can never surface a repeat to the user.
+  const newTitles: string[] = [];
+  for (const d of days) {
+    d.schedule.blocks = d.schedule.blocks.filter((b) => {
+      if (b.kind === "other") return true;
+      const key = normalizePlace(b.title);
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      newTitles.push(b.title.trim());
+      return true;
+    });
+    recomputeTotals(d.schedule);
+  }
+
+  return { days, usedPlaces: newTitles, usage };
+}
+
+function findDuplicates(
+  days: { schedule: DaySchedule }[],
+  priorSeen: Set<string>,
+): string[] {
+  const dupes: string[] = [];
+  const local = new Set(priorSeen);
+  for (const d of days) {
+    for (const b of d.schedule.blocks) {
+      if (b.kind === "other" || !b.title) continue;
+      const key = normalizePlace(b.title);
+      if (!key) continue;
+      if (local.has(key)) dupes.push(b.title.trim());
+      else local.add(key);
+    }
+  }
+  return [...new Set(dupes)];
+}
+
+function recomputeTotals(s: DaySchedule) {
+  const totals = { transport: 0, meals: 0, tickets: 0, other: 0, total: 0 };
+  for (const b of s.blocks) {
+    totals.transport += (b.transit?.cost ?? 0) + (b.costs?.transport ?? 0);
+    totals.meals += b.costs?.food ?? 0;
+    totals.tickets += b.costs?.entry ?? 0;
+  }
+  totals.transport = Math.round(totals.transport);
+  totals.meals = Math.round(totals.meals);
+  totals.tickets = Math.round(totals.tickets);
+  totals.total = totals.transport + totals.meals + totals.tickets + totals.other;
+  s.totals = totals;
 }
 
 function buildDays(
@@ -193,6 +262,14 @@ function buildDays(
               transport: numOrUndef((b.costs as Record<string, unknown>).transport),
               entry: numOrUndef((b.costs as Record<string, unknown>).entry),
               food: numOrUndef((b.costs as Record<string, unknown>).food),
+            }
+          : undefined,
+        alt: b.alt && typeof b.alt === "object" && (b.alt as Record<string, unknown>).title
+          ? {
+              title: String((b.alt as Record<string, unknown>).title).slice(0, 160),
+              desc: (b.alt as Record<string, unknown>).desc ? String((b.alt as Record<string, unknown>).desc).slice(0, 300) : undefined,
+              food: Math.max(0, Number((b.alt as Record<string, unknown>).food ?? 0)) || 0,
+              tier: (String((b.alt as Record<string, unknown>).tier) === "upscale" ? "upscale" : "budget") as "budget" | "upscale",
             }
           : undefined,
         book: b.book && typeof b.book === "object" && (b.book as Record<string, unknown>).required

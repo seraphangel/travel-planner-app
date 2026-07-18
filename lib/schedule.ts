@@ -16,6 +16,13 @@ export type TransitStep = {
   cost: number; // in the plan's currency, 0 if free/walking
 };
 
+export type MealAlt = {
+  title: string;
+  desc?: string;
+  food: number; // per-person cost in the plan's currency
+  tier: "budget" | "upscale";
+};
+
 export type ScheduleBlock = {
   t: string; // start time "09:15"
   dur: number; // minutes needed
@@ -26,6 +33,7 @@ export type ScheduleBlock = {
   open_note?: string; // "closed Mondays; last entry 16:30"
   transit?: TransitStep; // how to get here from the previous stop
   costs?: { transport?: number; entry?: number; food?: number };
+  alt?: MealAlt; // budget-or-upscale alternative for meal blocks
   book?: { required: boolean; url?: string };
   map?: string; // Google Maps search query
   sources?: string[]; // URLs the facts were checked against
@@ -55,6 +63,26 @@ export function parseSchedule(notes: string | null | undefined): DaySchedule | n
 
 export function serializeSchedule(schedule: DaySchedule): string {
   return JSON.stringify(schedule);
+}
+
+/** Normalize a place title for duplicate comparison across days. */
+export function normalizePlace(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "") // drop parentheticals like "(main branch)"
+    .replace(/\b(the|a|restaurant|cafe|café|bar|main branch|hakata|station)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+/**
+ * Named places a schedule commits to (sights, meal venues, evening spots).
+ * Used to prevent the same place being suggested on multiple days.
+ */
+export function placeTitlesFrom(schedule: DaySchedule): string[] {
+  return schedule.blocks
+    .filter((b) => b.kind !== "other" && b.title)
+    .map((b) => b.title.trim());
 }
 
 /**

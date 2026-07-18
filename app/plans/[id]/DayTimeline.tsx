@@ -118,6 +118,17 @@ export default function DayTimeline({ schedule }: { schedule: DaySchedule }) {
                   </a>
                 )}
               </div>
+
+              {b.alt && (
+                <p className="mt-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
+                  <span className="font-medium text-slate-700">
+                    {b.alt.tier === "upscale" ? "💎 Upscale option" : "💰 Budget option"}:
+                  </span>{" "}
+                  {b.alt.title}
+                  {money(b.alt.food, symbol) ? ` · ~${money(b.alt.food, symbol)}/person` : ""}
+                  {b.alt.desc ? ` — ${b.alt.desc}` : ""}
+                </p>
+              )}
             </div>
           </div>
         ))}

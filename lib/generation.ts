@@ -15,6 +15,8 @@ export type GenerationInput = {
   start_date: string | null; // ISO date of day 1
   // Currency all generated prices should be quoted in (defaults to USD).
   currency?: Currency;
+  // Named places to avoid suggesting (used on other days of this plan).
+  avoidPlaces?: string[];
 };
 
 export type GeneratedRecommendation = {
@@ -250,7 +252,11 @@ async function generateDayWithOpenAI(
         },
         {
           role: "user",
-          content: `Plan day ${dayNumber} of a ${input.duration_days}-day ${input.trip_purpose} trip to ${input.city}, ${input.country} (traveller from ${input.origin_country}, budget ${input.budget_range ?? "flexible"}). Quote any prices in ${(input.currency ?? DEFAULT_CURRENCY).code}. Propose a DIFFERENT angle on the city than a typical itinerary would have for this day — this is a regeneration, so avoid the most obvious picks.`,
+          content:
+            `Plan day ${dayNumber} of a ${input.duration_days}-day ${input.trip_purpose} trip to ${input.city}, ${input.country} (traveller from ${input.origin_country}, budget ${input.budget_range ?? "flexible"}). Quote any prices in ${(input.currency ?? DEFAULT_CURRENCY).code}. Propose a DIFFERENT angle on the city than a typical itinerary would have for this day — this is a regeneration, so avoid the most obvious picks.` +
+            (input.avoidPlaces && input.avoidPlaces.length
+              ? `\n\nThese places are ALREADY in the traveller's other days — do NOT suggest any of them again: ${input.avoidPlaces.join(", ")}.`
+              : ""),
         },
       ],
     }),

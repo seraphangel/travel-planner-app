@@ -8,7 +8,7 @@ import { isAdminEmail } from "@/lib/permissions";
 import { isDemoPlan } from "@/lib/types";
 import { countPlanAudits, fullRegenLimit } from "@/lib/limits";
 import { composeRecommendations, composeDaysChunk, DAYS_PER_CHUNK } from "@/lib/enriched";
-import { legacyFieldsFromSchedule, serializeSchedule } from "@/lib/schedule";
+import { legacyFieldsFromSchedule, parseSchedule, placeTitlesFrom, serializeSchedule } from "@/lib/schedule";
 
 export const maxDuration = 120;
 
@@ -223,14 +223,20 @@ export async function POST(request: Request) {
         return NextResponse.json({ status: "published", stage: "done", done: totalDays, total: totalDays, next: false });
       }
 
+      // Gather the actual named places used on all prior days so this chunk
+      // can avoid repeating any of them (the root cause of duplicate suggestions).
       const { data: prevDays } = await supabase
         .from("itinerary_days")
-        .select("itinerary_value")
+        .select("notes")
         .eq("travel_plan_id", plan.id)
         .lte("day_number", doneSoFar);
-      const previousAreas = (prevDays ?? []).map((d) => d.itinerary_value).filter(Boolean) as string[];
+      const usedPlaces: string[] = [];
+      for (const d of prevDays ?? []) {
+        const s = parseSchedule(d.notes);
+        if (s) usedPlaces.push(...placeTitlesFrom(s));
+      }
 
-      const { days, usage } = await composeDaysChunk(input, research, fromDay, toDay, previousAreas);
+      const { days, usage } = await composeDaysChunk(input, research, fromDay, toDay, usedPlaces);
 
       await supabase
         .from("itinerary_days")
