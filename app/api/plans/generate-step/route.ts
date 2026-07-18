@@ -4,6 +4,9 @@ import { writeAuditLog } from "@/lib/audit";
 import { currencyFromBudgetString } from "@/lib/currencies";
 import { generatePlanContent, persistGeneration, type GenerationInput } from "@/lib/generation";
 import { researchDestination, type ResearchResult } from "@/lib/research";
+import { isAdminEmail } from "@/lib/permissions";
+import { isDemoPlan } from "@/lib/types";
+import { countPlanAudits, fullRegenLimit } from "@/lib/limits";
 import { composeRecommendations, composeDaysChunk, DAYS_PER_CHUNK } from "@/lib/enriched";
 import { legacyFieldsFromSchedule, serializeSchedule } from "@/lib/schedule";
 
@@ -73,6 +76,28 @@ export async function POST(request: Request) {
   const input = buildInput(plan);
 
   if (restart) {
+    // Cost cap: a full regeneration runs the research pipeline (~$0.20-0.30).
+    // plan.generated is audited once per completed generation, including the
+    // first, so the limit covers total runs. Admins bypass for testing.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!isAdminEmail(user?.email)) {
+      const unlocked = plan.is_unlocked || isDemoPlan(plan.id);
+      const limit = fullRegenLimit(unlocked);
+      const used = await countPlanAudits(supabase, plan.id, "plan.generated");
+      if (used >= limit) {
+        return NextResponse.json(
+          {
+            error: unlocked
+              ? `This plan has used all ${limit} included generations.`
+              : `Free plans include ${limit} full generations — unlock the plan for ${fullRegenLimit(true)}.`,
+            code: "regen_limit_reached",
+          },
+          { status: 403 },
+        );
+      }
+    }
     await supabase.from("plan_recommendations").delete().eq("travel_plan_id", plan.id);
     await supabase.from("itinerary_days").delete().eq("travel_plan_id", plan.id);
     await supabase.from("travel_plans").update({ status: "enrich:queued" }).eq("id", plan.id);

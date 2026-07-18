@@ -27,6 +27,7 @@ export default function RegenerateDayButton({
   const [busy, setBusy] = useState<"draft" | "apply" | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState<number | null>(null);
 
   async function call(payload: Record<string, unknown>) {
     const res = await fetch("/api/itinerary/regenerate-day", {
@@ -45,6 +46,7 @@ export default function RegenerateDayButton({
     try {
       const data = await call({});
       setDraft(data.draft);
+      if (typeof data.remaining === "number") setRemaining(data.remaining);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not generate a draft");
     } finally {
@@ -86,7 +88,10 @@ export default function RegenerateDayButton({
               Draft replacement — Day {dayNumber}
               {draft.summary ? ` — ${draft.summary}` : ""}
             </h4>
-            <span className="text-xs text-slate-500">not saved yet</span>
+            <span className="text-xs text-slate-500">
+              not saved yet
+              {remaining != null ? ` · ${remaining} regeneration${remaining === 1 ? "" : "s"} left` : ""}
+            </span>
           </div>
           <dl className="mt-2 grid gap-2 sm:grid-cols-3 text-sm">
             <div><dt className="font-medium text-slate-500">🌅 Morning</dt><dd>{draft.morning}</dd></div>

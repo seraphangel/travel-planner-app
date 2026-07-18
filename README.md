@@ -40,6 +40,8 @@ numbered migration files — never edit `0001`.
 | `SUPABASE_SERVICE_ROLE_KEY` | before RLS lockdown | Webhook/admin DB access that bypasses RLS |
 | `ADMIN_EMAILS` | optional | Comma-separated emails allowed on `/admin` |
 | `FREE_PLAN_LIMIT` | optional | Unpaid plans allowed per account (default 3) |
+| `REGEN_DAY_FREE` / `REGEN_DAY_PAID` | optional | Single-day regenerations per plan: locked default 3, unlocked 15 |
+| `REGEN_FULL_FREE` / `REGEN_FULL_PAID` | optional | Full generations per plan incl. the first: locked default 2, unlocked 5 |
 | `POSTER_ADDON_PRICE_CENTS` | optional | AI seamless poster add-on price (default 499) |
 | `RESEND_API_KEY` / `RECEIPT_FROM_EMAIL` | optional | Payment receipt emails |
 

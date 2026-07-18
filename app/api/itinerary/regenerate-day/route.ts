@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { canEditPlan } from "@/lib/permissions";
+import { canEditPlan, isAdminEmail } from "@/lib/permissions";
 import { generateSingleDay } from "@/lib/generation";
 import { writeAuditLog } from "@/lib/audit";
 import { currencyFromBudgetString } from "@/lib/currencies";
+import { countPlanAudits, dayRegenLimit } from "@/lib/limits";
+import { isDemoPlan } from "@/lib/types";
 
 export const maxDuration = 120;
 
@@ -106,6 +108,24 @@ export async function POST(request: Request) {
   }
 
   // ── Draft: generate but do NOT save ───────────────────────────────────────
+  // Cost cap: each draft is a paid AI call. Limits scale with plan status
+  // (locked vs unlocked); admins bypass for testing.
+  const admin = isAdminEmail(user?.email);
+  const unlocked = plan.is_unlocked || isDemoPlan(plan.id);
+  const limit = dayRegenLimit(unlocked);
+  const used = await countPlanAudits(supabase, plan.id, "itinerary_day.draft_created");
+  if (!admin && used >= limit) {
+    return NextResponse.json(
+      {
+        error: unlocked
+          ? `This plan has used all ${limit} included day regenerations.`
+          : `Free plans include ${limit} day regenerations — unlock the full plan for ${dayRegenLimit(true)}.`,
+        code: "regen_limit_reached",
+      },
+      { status: 403 },
+    );
+  }
+
   try {
     const day = await generateSingleDay(
       {
@@ -133,7 +153,10 @@ export async function POST(request: Request) {
       risk_level: "low",
     });
 
-    return NextResponse.json({ draft: { ...day, source } });
+    return NextResponse.json({
+      draft: { ...day, source },
+      remaining: admin ? null : Math.max(0, limit - used - 1),
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Generation failed";
     return NextResponse.json(
