@@ -11,7 +11,9 @@ import type { ResearchResult } from "@/lib/research";
  * output ceiling.
  */
 
-export const DAYS_PER_CHUNK = 5;
+// Kept small so a single step — including its no-repeat retries — always
+// completes within the serverless function time limit.
+export const DAYS_PER_CHUNK = 3;
 
 type Usage = { prompt_tokens: number; completion_tokens: number };
 
@@ -143,12 +145,14 @@ export async function composeDaysChunk(
 
   const seen = new Set(usedPlaces.map(normalizePlace));
 
-  // Up to 3 attempts: fix wrong day count OR internal/cross-day duplicates.
+  // Up to 2 attempts (fix wrong day count OR duplicates) to stay within the
+  // function time budget; the final dedup pass below guarantees no repeat
+  // ever reaches the user even if the second attempt still has one.
   let days: { n: number; schedule: DaySchedule; summary: string }[] = [];
   let usage: Usage | undefined;
   let system = baseSystem;
   let user = baseUser;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const result = await chatJSON(system, user, 15000);
     usage = result.usage;
     days = buildDays(result.parsed, fromDay, toDay, cur.code, research.searched_at, input.city);
@@ -174,12 +178,14 @@ export async function composeDaysChunk(
     throw new Error(`Compose returned ${days.length} days for range ${fromDay}-${toDay}`);
   }
 
-  // Final safety net: drop any block that still duplicates a place, so a
-  // stubborn model can never surface a repeat to the user.
+  // Final safety net: drop any repeated attraction/evening spot so a stubborn
+  // model can never surface a duplicate sight to the user. Meal blocks are
+  // kept even if repeated (dropping one would break the 3-meals-a-day
+  // structure) — retries handle the rare meal repeat.
   const newTitles: string[] = [];
   for (const d of days) {
     d.schedule.blocks = d.schedule.blocks.filter((b) => {
-      if (b.kind === "other") return true;
+      if (b.kind !== "sight" && b.kind !== "evening") return true;
       const key = normalizePlace(b.title);
       if (!key) return true;
       if (seen.has(key)) return false;

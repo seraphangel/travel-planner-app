@@ -137,9 +137,17 @@ export async function POST(request: Request) {
 
   const status: string = plan.status ?? "enrich:queued";
 
+  // A plan that isn't mid-generation has nothing to do here. Only the
+  // restart path (cost-capped above) resets status to enrich:queued, so this
+  // is also what prevents re-running the paid pipeline on a published plan by
+  // calling the endpoint directly.
+  if (!status.startsWith("enrich:")) {
+    return NextResponse.json({ status, stage: "done", done: totalDays, total: totalDays, next: false });
+  }
+
   try {
     // ── Step 1: live web research ────────────────────────────────────────────
-    if (status === "enrich:queued" || status === "draft" || !status.startsWith("enrich:")) {
+    if (status === "enrich:queued") {
       const research = await researchDestination(input);
       await supabase.from("plan_recommendations").delete().eq("travel_plan_id", plan.id).eq("category", RESEARCH_CATEGORY);
       const { error: insErr } = await supabase.from("plan_recommendations").insert({
