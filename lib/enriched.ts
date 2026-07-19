@@ -130,7 +130,10 @@ export async function composeDaysChunk(
     `- Respect weekly closing days from the notes when placing sights on dated days${input.start_date ? ` (day 1 = ${input.start_date})` : ""}.\n` +
     `- NO REPEATS: every sight, restaurant and evening venue across the ENTIRE trip must be UNIQUE. Never suggest a place — as a primary OR an alt — that appears in the "already used" list below, and never reuse a place across the days in this batch. A city has many options; a repeated place reads as lazy and is unacceptable.` +
     (fromDay === 1 ? `\n- Day 1 must account for arrival logistics; ` : "") +
-    (toDay === input.duration_days ? `\n- The final day must account for checkout and departure.` : "");
+    (toDay === input.duration_days ? `\n- The final day must account for checkout and departure.` : "") +
+    (input.duration_days > 6
+      ? `\n- This is a LONG trip: to keep every place unique, widen the net beyond headline sights — include day trips to nearby towns/nature, distinct neighborhoods, markets, gardens, museums, cafes, viewpoints and seasonal spots. There are always enough distinct options; never fall back to repeating an earlier place.`
+      : "");
 
   const expected = toDay - fromDay + 1;
   const dayList = Array.from({ length: expected }, (_, i) => fromDay + i).join(", ");
@@ -174,9 +177,23 @@ export async function composeDaysChunk(
       baseUser;
   }
 
-  if (days.length !== expected) {
-    throw new Error(`Compose returned ${days.length} days for range ${fromDay}-${toDay}`);
+  // Accept the valid CONTIGUOUS run starting at fromDay, even if short. On a
+  // long single-city trip the no-repeat constraint can exhaust obvious places
+  // and the model returns fewer days than asked — the step runner then just
+  // advances by however many we got and continues, so a plan never gets stuck.
+  // (0 days is a genuine failure and is surfaced as retryable by the caller.)
+  days.sort((a, b) => a.n - b.n);
+  const contiguous: typeof days = [];
+  let expect = fromDay;
+  for (const d of days) {
+    if (d.n === expect) {
+      contiguous.push(d);
+      expect++;
+    } else if (d.n > expect) {
+      break;
+    }
   }
+  days = contiguous;
 
   // Final safety net: drop any repeated attraction/evening spot so a stubborn
   // model can never surface a duplicate sight to the user. Meal blocks are

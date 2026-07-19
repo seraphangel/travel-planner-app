@@ -246,12 +246,20 @@ export async function POST(request: Request) {
 
       const { days, usage } = await composeDaysChunk(input, research, fromDay, toDay, usedPlaces);
 
+      // The composer returns a contiguous run from fromDay; it may be shorter
+      // than requested on a place-exhausted long trip. Advance by however many
+      // we actually got so the plan always makes forward progress. 0 → retry.
+      if (days.length === 0) {
+        throw new Error(`No days produced for range ${fromDay}-${toDay}`);
+      }
+      const lastDay = fromDay + days.length - 1;
+
       await supabase
         .from("itinerary_days")
         .delete()
         .eq("travel_plan_id", plan.id)
         .gte("day_number", fromDay)
-        .lte("day_number", toDay);
+        .lte("day_number", lastDay);
 
       const start = plan.start_date ? new Date(plan.start_date + "T00:00:00Z") : null;
       const { error: insErr } = await supabase.from("itinerary_days").insert(
@@ -279,10 +287,10 @@ export async function POST(request: Request) {
       );
       if (insErr) throw new Error(insErr.message);
 
-      const finished = toDay >= totalDays;
+      const finished = lastDay >= totalDays;
       await supabase
         .from("travel_plans")
-        .update({ status: finished ? "published" : `enrich:days:${toDay}` })
+        .update({ status: finished ? "published" : `enrich:days:${lastDay}` })
         .eq("id", plan.id);
       await writeAuditLog(supabase, {
         action: finished ? "plan.generated" : "plan.enrich_step",
@@ -291,13 +299,13 @@ export async function POST(request: Request) {
         user_id: plan.user_id,
         detail: finished
           ? { source: "openai-enriched", days: totalDays, researched: research.searched_at, usage: usage ?? null }
-          : { step: `days ${fromDay}-${toDay}`, usage: usage ?? null },
+          : { step: `days ${fromDay}-${lastDay}`, usage: usage ?? null },
         risk_level: "low",
       });
       return NextResponse.json({
-        status: finished ? "published" : `enrich:days:${toDay}`,
+        status: finished ? "published" : `enrich:days:${lastDay}`,
         stage: finished ? "done" : "days",
-        done: toDay,
+        done: lastDay,
         total: totalDays,
         next: !finished,
       });
