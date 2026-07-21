@@ -61,6 +61,11 @@ export default function DayTimeline({ schedule }: { schedule: DaySchedule }) {
                 {b.kind === "breakfast" || b.kind === "lunch" || b.kind === "dinner"
                   ? `${b.kind[0].toUpperCase()}${b.kind.slice(1)} — ${b.title}`
                   : b.title}
+                {b.cuisine && (
+                  <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 align-middle text-xs font-normal text-amber-700">
+                    {b.cuisine}
+                  </span>
+                )}
               </p>
               {b.desc && <p className="mt-0.5 text-sm text-slate-600">{b.desc}</p>}
               {(b.why_time || b.open_note) && (
@@ -71,13 +76,19 @@ export default function DayTimeline({ schedule }: { schedule: DaySchedule }) {
                 </p>
               )}
 
-              {b.transit && b.transit.route && (
+              {b.transit && b.transit.route ? (
                 <p className="mt-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
                   <span aria-hidden>{MODE_ICON[b.transit.mode.toLowerCase()] ?? "🧭"}</span>{" "}
                   {b.transit.route}
                   {b.transit.mins ? ` · ${b.transit.mins} min` : ""}
                   {money(b.transit.cost, symbol) ? ` · ${money(b.transit.cost, symbol)}` : " · free"}
                 </p>
+              ) : (
+                b.kind !== "other" && (
+                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-400">
+                    🧭 Directions unavailable — check a map app
+                  </p>
+                )
               )}
 
               <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
@@ -125,6 +136,7 @@ export default function DayTimeline({ schedule }: { schedule: DaySchedule }) {
                     {b.alt.tier === "upscale" ? "💎 Upscale option" : "💰 Budget option"}:
                   </span>{" "}
                   {b.alt.title}
+                  {b.alt.cuisine ? ` (${b.alt.cuisine})` : ""}
                   {money(b.alt.food, symbol) ? ` · ~${money(b.alt.food, symbol)}/person` : ""}
                   {b.alt.desc ? ` — ${b.alt.desc}` : ""}
                 </p>

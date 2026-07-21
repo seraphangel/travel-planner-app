@@ -21,6 +21,7 @@ export type MealAlt = {
   desc?: string;
   food: number; // per-person cost in the plan's currency
   tier: "budget" | "upscale";
+  cuisine?: string; // e.g. "Ramen", "Italian", "Café"
 };
 
 export type ScheduleBlock = {
@@ -29,9 +30,10 @@ export type ScheduleBlock = {
   kind: "sight" | "breakfast" | "lunch" | "dinner" | "evening" | "other";
   title: string;
   desc: string;
+  cuisine?: string; // meal blocks: cuisine/food type served, e.g. "Sushi"
   why_time?: string; // "before 10:30 — tour groups arrive late morning"
   open_note?: string; // "closed Mondays; last entry 16:30"
-  transit?: TransitStep; // how to get here from the previous stop
+  transit?: TransitStep; // how to get here from the previous stop (required on every stop)
   costs?: { transport?: number; entry?: number; food?: number };
   alt?: MealAlt; // budget-or-upscale alternative for meal blocks
   book?: { required: boolean; url?: string };

@@ -103,7 +103,7 @@ export async function composeRecommendations(
 // ── Day chunks ───────────────────────────────────────────────────────────────
 
 const DAY_SCHEMA = `{"days":[{"day":1,"summary":"","start":"08:30","area":"","weather_note":"","blocks":[
-{"t":"08:30","dur":45,"kind":"breakfast","title":"","desc":"","costs":{"food":0},"alt":{"title":"","desc":"","food":0,"tier":"upscale"}},
+{"t":"08:30","dur":45,"kind":"breakfast","title":"","cuisine":"","desc":"","transit":{"mode":"walk","route":"","mins":0,"cost":0},"costs":{"food":0},"alt":{"title":"","cuisine":"","desc":"","food":0,"tier":"upscale"}},
 {"t":"09:30","dur":120,"kind":"sight","title":"","desc":"","why_time":"","open_note":"","transit":{"mode":"train","route":"","mins":0,"cost":0},"costs":{"transport":0,"entry":0},"book":{"required":false,"url":""},"map":"","sources":[""]}
 ]}]}`;
 
@@ -120,9 +120,9 @@ export async function composeDaysChunk(
     `Rules:\n` +
     `- Produce EXACTLY days ${fromDay} through ${toDay} (numbered), each with 5-8 blocks in chronological order.\n` +
     `- Every day includes: a recommended start time, breakfast AND lunch AND dinner blocks (kind breakfast/lunch/dinner) at real named places with per-person food cost, and one "evening" block with a non-dinner option (night view, cruise, show, market, onsen, bar street) including its cost.\n` +
-    `- For EVERY meal block (breakfast/lunch/dinner), the "title" is the primary pick with its costs.food, AND "alt" is a real alternative at a DIFFERENT price tier: if the primary is affordable, alt.tier="upscale" (a nicer splurge option); if the primary is high-end, alt.tier="budget" (a cheaper local option). alt.food is that option's per-person cost. Never leave alt empty on a meal.\n` +
+    `- For EVERY meal block (breakfast/lunch/dinner): set "cuisine" to the food type served (e.g. "Ramen", "Sushi", "Yakitori", "Italian", "Café", "Seafood"). The "title" is the primary pick with its costs.food, AND "alt" is a real alternative at a DIFFERENT price tier (also with its own "cuisine"): if the primary is affordable, alt.tier="upscale" (a nicer splurge); if the primary is high-end, alt.tier="budget" (a cheaper local option). alt.food is that option's per-person cost. Never leave alt or cuisine empty on a meal.\n` +
     `- kind "sight" blocks: real named places; dur = realistic minutes needed; why_time = when to go and why (crowds/light/heat); open_note = opening hours and weekly closing day if known.\n` +
-    `- transit on every block that moves location: mode, concrete route (line/bus number, stations), minutes, cost in ${cur.code}. Group each day by area to minimize backtracking.\n` +
+    `- DIRECTIONS ARE MANDATORY ON EVERY BLOCK — sights AND restaurants AND evening spots, with no exceptions. Fill "transit" for each: mode, a concrete route (specific line/bus number and the boarding + alighting stations, or "walk from <previous place>" when on foot), minutes, and cost in ${cur.code} (0 for walking). The very first block of a day gives directions from the traveller's accommodation/arrival point. A block without usable directions is invalid. Group each day by area to minimize backtracking.\n` +
     `- costs: numbers in ${cur.code} (no symbols, no strings). Omit fields that are zero.\n` +
     `- book.required true only when advance booking is genuinely needed; include the official url from the research notes when available.\n` +
     `- map: a Google Maps search string for the place.\n` +
@@ -167,6 +167,12 @@ export async function composeDaysChunk(
     const dupes = findDuplicates(days, seen);
     if (dupes.length) {
       problems.push(`These places are repeats and must be replaced with different real places: ${dupes.join(", ")}.`);
+    }
+    const incomplete = findIncompleteBlocks(days);
+    if (incomplete.length) {
+      problems.push(
+        `These stops are missing required directions or meal cuisine — add them: ${incomplete.slice(0, 8).join("; ")}.`,
+      );
     }
     if (problems.length === 0) break;
 
@@ -234,6 +240,23 @@ function findDuplicates(
   return [...new Set(dupes)];
 }
 
+// Every stop must carry usable directions; every meal must state its cuisine.
+function findIncompleteBlocks(days: { n: number; schedule: DaySchedule }[]): string[] {
+  const missing: string[] = [];
+  for (const d of days) {
+    for (const b of d.schedule.blocks) {
+      if (b.kind === "other" || !b.title) continue;
+      if (!b.transit || !b.transit.route.trim()) {
+        missing.push(`Day ${d.n} "${b.title}" (no directions)`);
+      }
+      if (["breakfast", "lunch", "dinner"].includes(b.kind) && !b.cuisine?.trim()) {
+        missing.push(`Day ${d.n} "${b.title}" (no cuisine)`);
+      }
+    }
+  }
+  return missing;
+}
+
 function recomputeTotals(s: DaySchedule) {
   const totals = { transport: 0, meals: 0, tickets: 0, other: 0, total: 0 };
   for (const b of s.blocks) {
@@ -269,6 +292,7 @@ function buildDays(
           ? String(b.kind)
           : "other") as ScheduleBlock["kind"],
         title: String(b.title ?? "").slice(0, 160),
+        cuisine: b.cuisine ? String(b.cuisine).slice(0, 60) : undefined,
         desc: String(b.desc ?? "").slice(0, 500),
         why_time: b.why_time ? String(b.why_time).slice(0, 250) : undefined,
         open_note: b.open_note ? String(b.open_note).slice(0, 200) : undefined,
@@ -290,6 +314,7 @@ function buildDays(
         alt: b.alt && typeof b.alt === "object" && (b.alt as Record<string, unknown>).title
           ? {
               title: String((b.alt as Record<string, unknown>).title).slice(0, 160),
+              cuisine: (b.alt as Record<string, unknown>).cuisine ? String((b.alt as Record<string, unknown>).cuisine).slice(0, 60) : undefined,
               desc: (b.alt as Record<string, unknown>).desc ? String((b.alt as Record<string, unknown>).desc).slice(0, 300) : undefined,
               food: Math.max(0, Number((b.alt as Record<string, unknown>).food ?? 0)) || 0,
               tier: (String((b.alt as Record<string, unknown>).tier) === "upscale" ? "upscale" : "budget") as "budget" | "upscale",
