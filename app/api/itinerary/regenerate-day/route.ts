@@ -1,14 +1,23 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { canEditPlan, isAdminEmail } from "@/lib/permissions";
-import { generateSingleDay } from "@/lib/generation";
+import { generateSingleDay, type GenerationInput } from "@/lib/generation";
+import { composeDaysChunk } from "@/lib/enriched";
+import type { ResearchResult } from "@/lib/research";
 import { writeAuditLog } from "@/lib/audit";
 import { currencyFromBudgetString } from "@/lib/currencies";
 import { countPlanAudits, dayRegenLimit } from "@/lib/limits";
 import { isDemoPlan } from "@/lib/types";
-import { parseSchedule, placeTitlesFrom } from "@/lib/schedule";
+import {
+  legacyFieldsFromSchedule,
+  parseSchedule,
+  placeTitlesFrom,
+  serializeSchedule,
+} from "@/lib/schedule";
 
 export const maxDuration = 120;
+
+const RESEARCH_CATEGORY = "_research";
 
 /**
  * POST /api/itinerary/regenerate-day
@@ -17,6 +26,12 @@ export const maxDuration = 120;
  *
  * Draft:   { planId, dayNumber }                → { draft }
  * Confirm: { planId, dayNumber, apply, draft }  → { ok: true }
+ *
+ * When the plan has stored web-research (enriched plans), the new day is
+ * composed in the SAME enriched format as the rest of the plan (timed blocks,
+ * per-stop directions, cuisine, itemized costs, meal alternatives). Older
+ * plans with no research fall back to the simple morning/afternoon/evening
+ * format so the button still works everywhere.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -57,20 +72,37 @@ export async function POST(request: Request) {
     const draft = body.draft as Record<string, unknown> | undefined;
     if (!draft) return NextResponse.json({ error: "draft is required to apply" }, { status: 400 });
 
-    const fields = {
-      // Single-day drafts are in the simple format; clear any rich schedule
-      // JSON so the day renders the draft rather than stale timeline data.
-      notes: null as string | null,
-      morning_activity: String(draft.morning ?? ""),
-      afternoon_activity: String(draft.afternoon ?? ""),
-      evening_activity: String(draft.evening ?? ""),
-      meals: String(draft.meals ?? ""),
-      transport_notes: String(draft.transport ?? ""),
-      itinerary_value: String(draft.summary ?? ""),
-      itinerary_source: String(draft.source ?? "unknown"),
-      itinerary_confidence: Number(draft.confidence ?? 0.5),
-      itinerary_review_status: Number(draft.confidence ?? 0) >= 0.7 ? "approved" : "unreviewed",
-    };
+    // Enriched draft carries a full schedule; simple draft has text fields.
+    const draftSchedule = draft.schedule
+      ? parseSchedule(typeof draft.schedule === "string" ? draft.schedule : JSON.stringify(draft.schedule))
+      : null;
+
+    let fields: Record<string, unknown>;
+    if (draftSchedule) {
+      const legacy = legacyFieldsFromSchedule(draftSchedule);
+      fields = {
+        notes: serializeSchedule(draftSchedule),
+        ...legacy,
+        itinerary_value: String(draft.summary ?? ""),
+        itinerary_source: String(draft.source ?? "openai-enriched"),
+        itinerary_confidence: 0.85,
+        itinerary_review_status: "approved",
+      };
+    } else {
+      fields = {
+        // Simple draft: clear any rich schedule so the day renders the draft.
+        notes: null,
+        morning_activity: String(draft.morning ?? ""),
+        afternoon_activity: String(draft.afternoon ?? ""),
+        evening_activity: String(draft.evening ?? ""),
+        meals: String(draft.meals ?? ""),
+        transport_notes: String(draft.transport ?? ""),
+        itinerary_value: String(draft.summary ?? ""),
+        itinerary_source: String(draft.source ?? "unknown"),
+        itinerary_confidence: Number(draft.confidence ?? 0.5),
+        itinerary_review_status: Number(draft.confidence ?? 0) >= 0.7 ? "approved" : "unreviewed",
+      };
+    }
 
     const { data: existing } = await supabase
       .from("itinerary_days")
@@ -102,7 +134,7 @@ export async function POST(request: Request) {
       entity_type: "travel_plan",
       entity_id: plan.id,
       user_id: user?.id ?? null,
-      detail: { day_number: dayNumber, source: fields.itinerary_source },
+      detail: { day_number: dayNumber, source: fields.itinerary_source, enriched: !!draftSchedule },
       risk_level: "medium",
     });
     return NextResponse.json({ ok: true });
@@ -139,21 +171,51 @@ export async function POST(request: Request) {
     if (s) avoidPlaces.push(...placeTitlesFrom(s));
   }
 
+  const input: GenerationInput = {
+    city: plan.destinations?.city ?? plan.title,
+    country: plan.destinations?.country ?? "",
+    origin_country: plan.origin_country,
+    trip_purpose: plan.trip_purpose,
+    budget_range: plan.budget_range,
+    currency: currencyFromBudgetString(plan.budget_range),
+    duration_days: plan.duration_days ?? dayNumber,
+    start_date: plan.start_date,
+    avoidPlaces,
+  };
+
+  // Enriched path: reuse the stored web-research to compose one day in the
+  // full enriched format, matching the rest of the plan.
+  const { data: researchRow } = await supabase
+    .from("plan_recommendations")
+    .select("description")
+    .eq("travel_plan_id", plan.id)
+    .eq("category", RESEARCH_CATEGORY)
+    .maybeSingle();
+
   try {
-    const day = await generateSingleDay(
-      {
-        city: plan.destinations?.city ?? plan.title,
-        country: plan.destinations?.country ?? "",
-        origin_country: plan.origin_country,
-        trip_purpose: plan.trip_purpose,
-        budget_range: plan.budget_range,
-        currency: currencyFromBudgetString(plan.budget_range),
-        duration_days: plan.duration_days ?? dayNumber,
-        start_date: plan.start_date,
-        avoidPlaces,
-      },
-      dayNumber,
-    );
+    if (process.env.OPENAI_API_KEY && researchRow?.description) {
+      const research = JSON.parse(researchRow.description) as ResearchResult;
+      const { days } = await composeDaysChunk(input, research, dayNumber, dayNumber, avoidPlaces);
+      if (days.length === 0) throw new Error("No day produced");
+      const { schedule, summary } = days[0];
+
+      await writeAuditLog(supabase, {
+        action: "itinerary_day.draft_created",
+        entity_type: "travel_plan",
+        entity_id: plan.id,
+        user_id: user?.id ?? null,
+        detail: { day_number: dayNumber, source: "openai-enriched", enriched: true },
+        risk_level: "low",
+      });
+
+      return NextResponse.json({
+        draft: { schedule, summary, source: "openai-enriched" },
+        remaining: admin ? null : Math.max(0, limit - used - 1),
+      });
+    }
+
+    // Fallback: simple format (no research / no AI key).
+    const day = await generateSingleDay(input, dayNumber);
     const source = process.env.OPENAI_API_KEY
       ? `openai-${process.env.OPENAI_MODEL ?? "gpt-4o"}`
       : "template-v1";
@@ -163,7 +225,7 @@ export async function POST(request: Request) {
       entity_type: "travel_plan",
       entity_id: plan.id,
       user_id: user?.id ?? null,
-      detail: { day_number: dayNumber, source },
+      detail: { day_number: dayNumber, source, enriched: false },
       risk_level: "low",
     });
 

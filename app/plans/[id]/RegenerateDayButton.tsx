@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import DayTimeline from "./DayTimeline";
+import type { DaySchedule } from "@/lib/schedule";
 
-type Draft = {
+type SimpleDraft = {
   morning: string;
   afternoon: string;
   evening: string;
@@ -13,6 +15,12 @@ type Draft = {
   confidence: number;
   source: string;
 };
+type EnrichedDraft = { schedule: DaySchedule; summary: string; source: string };
+type Draft = (SimpleDraft | EnrichedDraft) & { source: string };
+
+function isEnriched(d: Draft): d is EnrichedDraft & { source: string } {
+  return "schedule" in d && !!(d as EnrichedDraft).schedule;
+}
 
 // Medium-risk agent action: the regenerated day is shown as a draft and only
 // saved when the user explicitly applies it (docs/AGENTIC_LAYER.md).
@@ -93,18 +101,28 @@ export default function RegenerateDayButton({
               {remaining != null ? ` · ${remaining} regeneration${remaining === 1 ? "" : "s"} left` : ""}
             </span>
           </div>
-          <dl className="mt-2 grid gap-2 sm:grid-cols-3 text-sm">
-            <div><dt className="font-medium text-slate-500">🌅 Morning</dt><dd>{draft.morning}</dd></div>
-            <div><dt className="font-medium text-slate-500">☀️ Afternoon</dt><dd>{draft.afternoon}</dd></div>
-            <div><dt className="font-medium text-slate-500">🌙 Evening</dt><dd>{draft.evening}</dd></div>
-          </dl>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2 text-sm text-slate-600">
-            {draft.meals && <p>🍽️ {draft.meals}</p>}
-            {draft.transport && <p>🚉 {draft.transport}</p>}
+
+          <div className="mt-2 rounded-lg bg-white p-3">
+            {isEnriched(draft) ? (
+              <DayTimeline schedule={draft.schedule} />
+            ) : (
+              <>
+                <dl className="grid gap-2 sm:grid-cols-3 text-sm">
+                  <div><dt className="font-medium text-slate-500">🌅 Morning</dt><dd>{draft.morning}</dd></div>
+                  <div><dt className="font-medium text-slate-500">☀️ Afternoon</dt><dd>{draft.afternoon}</dd></div>
+                  <div><dt className="font-medium text-slate-500">🌙 Evening</dt><dd>{draft.evening}</dd></div>
+                </dl>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 text-sm text-slate-600">
+                  {draft.meals && <p>🍽️ {draft.meals}</p>}
+                  {draft.transport && <p>🚉 {draft.transport}</p>}
+                </div>
+                {draft.confidence < 0.7 && (
+                  <p className="mt-2 text-xs text-amber-600">⚠️ AI-generated — verify before booking</p>
+                )}
+              </>
+            )}
           </div>
-          {draft.confidence < 0.7 && (
-            <p className="mt-2 text-xs text-amber-600">⚠️ AI-generated — verify before booking</p>
-          )}
+
           <div className="mt-3 flex gap-2">
             <button
               onClick={applyDraft}
